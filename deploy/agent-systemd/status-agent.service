@@ -1,0 +1,34 @@
+[Unit]
+Description=Status Control outbound probe agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=status-agent
+Group=status-agent
+EnvironmentFile=-/etc/status-agent/status-agent.env
+ExecStart=/usr/local/bin/status-agent -config /etc/status-agent/config.yaml
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/status-agent
+
+MemoryMax=96M
+CPUQuota=25%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

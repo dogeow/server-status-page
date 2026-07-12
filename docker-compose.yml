@@ -1,0 +1,199 @@
+name: status-control
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-api: &api
+  build:
+    context: ./apps/api
+  image: status-control-api:local
+  env_file: .env
+  environment:
+    APP_ENV: production
+    APP_DEBUG: "false"
+    LOG_CHANNEL: stderr
+    DB_CONNECTION: pgsql
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_DATABASE: ${POSTGRES_DB}
+    DB_USERNAME: ${POSTGRES_USER}
+    DB_PASSWORD: ${POSTGRES_PASSWORD}
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # Core scheduler locks and rate limits stay on PostgreSQL so a Redis
+    # outage only removes realtime delivery; the public UI keeps polling.
+    CACHE_STORE: database
+    SESSION_DRIVER: database
+    QUEUE_CONNECTION: database
+    BROADCAST_CONNECTION: reverb
+    REVERB_HOST: reverb
+    REVERB_PORT: 8080
+    REVERB_SCHEME: http
+    XDG_CONFIG_HOME: /app/storage/caddy-config
+    XDG_DATA_HOME: /app/storage/caddy-data
+  volumes:
+    - api_storage:/app/storage
+  logging: *logging
+  networks: [status]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+    networks: [status]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    logging: *logging
+    networks: [status]
+
+  api-init:
+    <<: *api
+    restart: "no"
+    command: ["sh", "-lc", "php artisan migrate --force && php artisan db:seed --force"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *api
+    restart: unless-stopped
+    depends_on:
+      api-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/api/readiness?nonce=docker-health') === false ? 1 : 0);"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    <<: *api
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "database", "--queue=default,status-probe", "--sleep=1", "--tries=1", "--timeout=60", "--max-time=3600"]
+    healthcheck:
+      disable: true
+    depends_on:
+      api-init: { condition: service_completed_successfully }
+
+  outbox:
+    <<: *api
+    restart: unless-stopped
+    command: ["php", "artisan", "status:outbox-work", "--limit=100"]
+    healthcheck:
+      disable: true
+    depends_on:
+      api-init: { condition: service_completed_successfully }
+
+  scheduler:
+    <<: *api
+    restart: unless-stopped
+    command: ["php", "artisan", "schedule:work"]
+    healthcheck:
+      disable: true
+    depends_on:
+      api-init: { condition: service_completed_successfully }
+
+  reverb:
+    <<: *api
+    restart: unless-stopped
+    command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]
+    healthcheck:
+      disable: true
+    depends_on:
+      api-init: { condition: service_completed_successfully }
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_SITE_URL: ${APP_URL}
+        NEXT_PUBLIC_REVERB_WS_URL: ${NEXT_PUBLIC_REVERB_WS_URL}
+    image: status-control-web:local
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      NEXT_PUBLIC_SITE_URL: ${APP_URL}
+      NEXT_PUBLIC_REVERB_WS_URL: ${NEXT_PUBLIC_REVERB_WS_URL}
+    depends_on:
+      api: { condition: service_healthy }
+    logging: *logging
+    networks: [status]
+
+  caddy:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web: { condition: service_healthy }
+      reverb: { condition: service_started }
+    logging: *logging
+    networks: [status]
+
+  central-agent:
+    profiles: [agent]
+    build:
+      context: ./agent
+    image: status-control-agent:local
+    restart: unless-stopped
+    environment:
+      STATUS_AGENT_SERVER_URL: http://api:8000
+      STATUS_AGENT_ENROLLMENT_TOKEN: ${STATUS_AGENT_ENROLLMENT_TOKEN:-}
+      STATUS_AGENT_NAME: central-agent
+      STATUS_AGENT_STATE_DIR: /var/lib/status-agent
+      STATUS_AGENT_LOG_LEVEL: info
+      STATUS_PROBE_MYSQL_DSN: ${STATUS_PROBE_MYSQL_DSN:-}
+      STATUS_PROBE_POSTGRES_DSN: ${STATUS_PROBE_POSTGRES_DSN:-}
+      STATUS_PROBE_REDIS_URL: ${STATUS_PROBE_REDIS_URL:-}
+    volumes:
+      - ./config/central-agent.yaml:/etc/status-agent/config.yaml:ro
+      - agent_state:/var/lib/status-agent
+    depends_on:
+      api: { condition: service_healthy }
+    logging: *logging
+    networks: [status]
+
+networks:
+  status:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_storage:
+  agent_state:
+  caddy_data:
+  caddy_config:

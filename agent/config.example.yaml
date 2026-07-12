@@ -1,0 +1,25 @@
+# STATUS_AGENT_SERVER_URL overrides this value in containers.
+server_url: https://status.example.com
+name: central-agent
+
+# The enrollment token is used once. After enrollment the returned agent ID and
+# signing secret are stored mode 0600 under state_dir.
+enrollment_token: env://STATUS_AGENT_ENROLLMENT_TOKEN
+state_dir: /var/lib/status-agent
+
+# file:// secretRef values may optionally be confined to this directory.
+secret_file_root: /run/secrets
+
+plan_poll_interval: 15s
+heartbeat_interval: 30s
+upload_interval: 5s
+batch_size: 100
+concurrency: 10
+spool_max_results: 10000
+log_level: info
+
+tls:
+  ca_file: ""
+  client_cert_file: ""
+  client_key_file: ""
+  insecure_skip_verify: false

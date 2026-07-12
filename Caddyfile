@@ -1,0 +1,37 @@
+{
+  admin off
+}
+
+{$STATUS_SITE_ADDRESS:http://localhost} {
+  encode zstd gzip
+
+  @reverb path /app/* /apps/*
+  handle @reverb {
+    reverse_proxy reverb:8080
+  }
+
+  @backend path /api/* /sanctum/* /up /up/*
+  handle @backend {
+    reverse_proxy api:8000
+  }
+
+  @publicStatus path /api/public/v1/status /api/public/v1/history* /api/public/v1/incidents/*
+  header @publicStatus Cache-Control "public, max-age=15, stale-if-error=86400"
+
+  handle {
+    reverse_proxy web:3000
+  }
+
+  header {
+    -Server
+    X-Content-Type-Options nosniff
+    X-Frame-Options SAMEORIGIN
+    Referrer-Policy strict-origin-when-cross-origin
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+
+  log {
+    output stdout
+    format json
+  }
+}

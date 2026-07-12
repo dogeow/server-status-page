@@ -1,0 +1,14 @@
+server_url: http://api:8000
+enrollment_token: ""
+name: central-agent
+state_dir: /var/lib/status-agent
+secret_file_root: /run/secrets
+plan_poll_interval: 15s
+heartbeat_interval: 30s
+upload_interval: 5s
+batch_size: 100
+concurrency: 10
+spool_max_results: 10000
+log_level: info
+tls:
+  insecure_skip_verify: false
