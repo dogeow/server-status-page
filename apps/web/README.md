@@ -1,4 +1,4 @@
-# Status Control Web
+# Server Status Page Web
 
 公开状态页与私有管理后台，使用 Next.js 兼容 API、React 和 Vinext 构建，并以普通 Node.js 服务运行。它不依赖 Cloudflare Worker、D1 或 R2。
 

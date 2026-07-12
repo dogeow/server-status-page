@@ -1,5 +1,5 @@
 [Unit]
-Description=Status Control outbound probe agent
+Description=Server Status Page outbound probe agent
 After=network-online.target
 Wants=network-online.target
 

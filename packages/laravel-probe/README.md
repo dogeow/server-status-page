@@ -26,14 +26,14 @@ php artisan vendor:publish --tag=status-probe-config
 
 Laravel package discovery registers `StatusProbeServiceProvider` and the `StatusProbe` facade. For a local monorepo before publishing, add a Composer `path` repository pointing at `packages/laravel-probe`.
 
-Create a Laravel Integration in the Status Control admin first. It returns one
+Create a Laravel Integration in the Server Status Page admin first. It returns one
 absolute endpoint and the current secret exactly once. Configure those returned
 values in the monitored application:
 
 ```dotenv
 STATUS_PROBE_APP_ID=orders-api
 STATUS_PROBE_INSTANCE_ID=orders-api-01
-STATUS_PROBE_PUSH_URL=https://status-control.example.com/api/probe/v1/integrations/<integration-uuid>/events
+STATUS_PROBE_PUSH_URL=https://status-page.example.com/api/probe/v1/integrations/<integration-uuid>/events
 STATUS_PROBE_SECRET_CURRENT=replace-with-a-random-32-byte-or-longer-secret
 STATUS_PROBE_PUSH_TIMEOUT=2
 STATUS_PROBE_CONNECT_TIMEOUT=1

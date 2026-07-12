@@ -1,6 +1,6 @@
-# Status Control 生产部署手册
+# Server Status Page 生产部署手册
 
-本文说明如何把 Status Control 部署到一台独立的公网 VPS。示例域名为 `status.example.com`，请全部替换成你的真实域名。
+本文说明如何把 Server Status Page 部署到一台独立的公网 VPS。示例域名为 `status.example.com`，请全部替换成你的真实域名。
 
 ## 1. 部署前准备
 
@@ -60,32 +60,32 @@ sudo docker run --rm hello-world
 在服务器创建目录：
 
 ```bash
-sudo mkdir -p /opt/status-control
-sudo chown "$USER":"$USER" /opt/status-control
-cd /opt/status-control
+sudo mkdir -p /opt/server-status-page
+sudo chown "$USER":"$USER" /opt/server-status-page
+cd /opt/server-status-page
 ```
 
 把源码压缩包上传并解压到该目录，最终应能看到 `docker-compose.yml`、`Makefile`、`apps/`、`agent/` 等文件。例如从本机执行：
 
 ```bash
-scp status-control-source.zip root@<VPS-IP>:/opt/status-control/
+scp server-status-page-source.zip root@<VPS-IP>:/opt/server-status-page/
 ```
 
 然后在 VPS 执行：
 
 ```bash
-cd /opt/status-control
-unzip status-control-source.zip
+cd /opt/server-status-page
+unzip server-status-page-source.zip
 ```
 
-如果压缩包解压后多了一层 `status-control-source/`，进入该目录再执行后续命令。
+如果压缩包解压后多了一层 `server-status-page-source/`，进入该目录再执行后续命令。
 
 ## 4. 生成并配置生产环境变量
 
 先生成随机的应用、PostgreSQL、Redis 和 Reverb 密钥：
 
 ```bash
-cd /opt/status-control
+cd /opt/server-status-page
 make init
 ```
 
@@ -248,17 +248,17 @@ docker run --read-only --restart unless-stopped \
   -e STATUS_AGENT_ENROLLMENT_TOKEN='<one-time-token>' \
   -e STATUS_AGENT_NAME=edge-cn \
   -v status-agent-data:/var/lib/status-agent \
-  status-control-agent:local
+  server-status-page-agent:local
 ```
 
-上述 `status-control-agent:local` 镜像必须先在远端构建或通过你的私有镜像仓库分发。完整的独立 Agent 配置见 [`agent/README.md`](../agent/README.md)。数据库等凭据优先通过 Agent 本地环境变量或 Docker secrets 提供，不要保存到控制面的可见监控配置中。
+上述 `server-status-page-agent:local` 镜像必须先在远端构建或通过你的私有镜像仓库分发。完整的独立 Agent 配置见 [`agent/README.md`](../agent/README.md)。数据库等凭据优先通过 Agent 本地环境变量或 Docker secrets 提供，不要保存到管理后台的可见监控配置中。
 
 ## 10. 备份与恢复
 
 每天至少备份 PostgreSQL 和 `.env`。创建数据库备份：
 
 ```bash
-cd /opt/status-control
+cd /opt/server-status-page
 mkdir -p backups
 docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "backups/status-$(date -u +%Y%m%dT%H%M%SZ).dump"
 cp .env "backups/env-$(date -u +%Y%m%dT%H%M%SZ)"

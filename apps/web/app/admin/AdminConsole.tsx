@@ -501,7 +501,7 @@ export function AdminConsole() {
       <aside className="admin-sidebar">
         <Link className="brand" href="/admin">
           <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
-          <span>Status Control</span>
+          <span>Server Status Page</span>
         </Link>
         <nav className="admin-nav" aria-label="管理后台导航">
           {sections.map((item) => (

@@ -1,8 +1,8 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "status-control/control-plane",
+    "name": "server-status-page/api",
     "type": "project",
-    "description": "Laravel control plane for the self-hosted Status Control service.",
+    "description": "Laravel API for the self-hosted Server Status Page service.",
     "keywords": ["status-page", "monitoring", "laravel", "reverb"],
     "license": "MIT",
     "require": {

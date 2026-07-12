@@ -1,4 +1,4 @@
-name: status-control
+name: server-status-page
 
 x-logging: &logging
   driver: local
@@ -9,7 +9,7 @@ x-logging: &logging
 x-api: &api
   build:
     context: ./apps/api
-  image: status-control-api:local
+  image: server-status-page-api:local
   env_file: .env
   environment:
     APP_ENV: production
@@ -134,7 +134,7 @@ services:
       args:
         NEXT_PUBLIC_SITE_URL: ${APP_URL}
         NEXT_PUBLIC_REVERB_WS_URL: ${NEXT_PUBLIC_REVERB_WS_URL}
-    image: status-control-web:local
+    image: server-status-page-web:local
     restart: unless-stopped
     environment:
       API_INTERNAL_URL: http://api:8000
@@ -167,7 +167,7 @@ services:
     profiles: [agent]
     build:
       context: ./agent
-    image: status-control-agent:local
+    image: server-status-page-agent:local
     restart: unless-stopped
     environment:
       STATUS_AGENT_SERVER_URL: http://api:8000

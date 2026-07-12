@@ -1,5 +1,5 @@
 {
-  "name": "status-control-web",
+  "name": "server-status-page-web",
   "version": "0.1.0",
   "private": true,
   "engines": {

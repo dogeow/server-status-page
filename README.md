@@ -1,4 +1,4 @@
-# Status Control
+# Server Status Page
 
 自托管的单组织状态监控服务。它包含公开状态页、私有管理后台、Laravel 控制面、出站式 Go Agent，以及供业务应用安装的 Laravel 探针包。
 
@@ -82,7 +82,7 @@ docker run --read-only --restart unless-stopped \
   -e STATUS_AGENT_ENROLLMENT_TOKEN='<one-time-token>' \
   -e STATUS_AGENT_NAME=edge-cn \
   -v status-agent-data:/var/lib/status-agent \
-  status-control-agent:local
+  server-status-page-agent:local
 ```
 
 保留 `/var/lib/status-agent`，其中包含权限为 `0600` 的 Agent 凭据、最近计划和离线结果。Agent 只执行编译内置的 typed probes，不接受 Shell 命令。
@@ -106,7 +106,7 @@ docker run --read-only --restart unless-stopped \
 ```json
 {
   "repositories": [
-    { "type": "path", "url": "../status-control/packages/laravel-probe" }
+    { "type": "path", "url": "../server-status-page/packages/laravel-probe" }
   ]
 }
 ```
