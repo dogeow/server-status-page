@@ -16,9 +16,25 @@ class PushMonitorHealthService
         $evaluated = 0;
         $now = CarbonImmutable::now('UTC')->startOfSecond();
 
-        foreach (Monitor::query()->where('enabled', true)->whereIn('type', ['laravel_queue', 'laravel_scheduler'])->get() as $monitor) {
+        foreach (Monitor::query()->where('enabled', true)->whereIn('type', ['heartbeat', 'laravel_queue', 'laravel_scheduler'])->get() as $monitor) {
             $degradedAfter = max(30, (int) (($monitor->config['degraded_after_seconds'] ?? null) ?: 150));
             $downAfter = max($degradedAfter + 1, (int) (($monitor->config['down_after_seconds'] ?? null) ?: 210));
+
+            if ($monitor->type === 'heartbeat') {
+                $lastSuccess = $monitor->last_success_at ?: $monitor->created_at;
+                $age = $lastSuccess->diffInSeconds($now);
+                if ($age >= $downAfter && $monitor->status !== ComponentStatus::MajorOutage->value) {
+                    $monitor->update(['consecutive_failures' => max(2, $monitor->consecutive_failures)]);
+                    $this->recorder->record($monitor->fresh(), 'timeout', $now, null, 'heartbeat_missing', ['age_seconds' => $age]);
+                    $evaluated++;
+                } elseif ($age >= $degradedAfter && ! in_array($monitor->status, [ComponentStatus::Degraded->value, ComponentStatus::MajorOutage->value], true)) {
+                    $monitor->update(['consecutive_failures' => max(1, $monitor->consecutive_failures)]);
+                    $this->recorder->record($monitor->fresh(), 'timeout', $now, null, 'heartbeat_late', ['age_seconds' => $age]);
+                    $evaluated++;
+                }
+
+                continue;
+            }
 
             if ($monitor->type === 'laravel_scheduler') {
                 $lastSuccess = $monitor->last_success_at ?: $monitor->created_at;

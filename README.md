@@ -132,6 +132,8 @@ STATUS_PROBE_SECRET_CURRENT=<shown-once-secret>
 
 完整包配置、readiness、密钥轮换和任务包装示例见 `packages/laravel-probe/README.md`。
 
+非 Laravel 的本机 systemd 服务可使用[本机 systemd + UDP/freshness Heartbeat](docs/LOCAL_HEARTBEAT.md)：脚本固定检查 unit active，可选检查 UDP listener 或周期更新文件的新鲜度，再通过 monitor 独立密钥签名上报；secret 只从 root-only `0600` 文件读取。
+
 ## 状态、事件与通知
 
 - 普通监控默认 60 秒，可配置 15 秒至 24 小时；连接超时 2 秒、总超时 5 秒、Reverb 10 秒。

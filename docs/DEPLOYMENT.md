@@ -253,6 +253,8 @@ docker run --read-only --restart unless-stopped \
 
 上述 `server-status-page-agent:local` 镜像必须先在远端构建或通过你的私有镜像仓库分发。完整的独立 Agent 配置见 [`agent/README.md`](../agent/README.md)。数据库等凭据优先通过 Agent 本地环境变量或 Docker secrets 提供，不要保存到管理后台的可见监控配置中。
 
+如果某个非 Laravel 服务只需要上报本机 systemd 状态，以及可选的 UDP listener 或周期更新文件新鲜度，可部署不接受远程命令的签名 Heartbeat reporter。脚本、systemd service/timer 模板、root-only 配置及权限要求见[本机 systemd + UDP/freshness Heartbeat](LOCAL_HEARTBEAT.md)。
+
 ## 10. 备份与恢复
 
 每天至少备份 PostgreSQL 和 `.env`。创建数据库备份：

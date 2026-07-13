@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Enums\ComponentStatus;
 use App\Models\Component;
 use App\Models\ComponentGroup;
+use App\Models\Incident;
 use App\Models\Monitor;
 use App\Models\StatusPage;
 use App\Models\User;
+use App\Services\PushMonitorHealthService;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
@@ -15,6 +19,12 @@ use Tests\TestCase;
 class PushHeartbeatTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function tearDown(): void
+    {
+        CarbonImmutable::setTestNow();
+        parent::tearDown();
+    }
 
     public function test_signed_heartbeat_is_idempotent_and_replay_protected(): void
     {
@@ -53,6 +63,71 @@ class PushHeartbeatTest extends TestCase
 
         $http = $this->monitor('http', 'http-monitor');
         $this->postJson('/api/admin/v1/monitors/'.$http->id.'/rotate-heartbeat-secret')->assertUnprocessable();
+    }
+
+    public function test_missing_heartbeat_degrades_and_goes_down_without_repeated_results_or_incidents(): void
+    {
+        $start = CarbonImmutable::parse('2026-07-14 12:00:00 UTC');
+        CarbonImmutable::setTestNow($start);
+        $monitor = $this->monitor('heartbeat');
+        $component = $monitor->component;
+
+        CarbonImmutable::setTestNow($start->addSeconds(151));
+        $this->assertSame(1, app(PushMonitorHealthService::class)->evaluate());
+        $this->assertSame(ComponentStatus::Degraded->value, $component->fresh()->status);
+        $this->assertDatabaseCount('check_results', 1);
+        $this->assertSame(1, Incident::query()->count());
+
+        CarbonImmutable::setTestNow($start->addSeconds(180));
+        $this->assertSame(0, app(PushMonitorHealthService::class)->evaluate());
+        $this->assertDatabaseCount('check_results', 1);
+        $this->assertSame(1, Incident::query()->count());
+
+        CarbonImmutable::setTestNow($start->addSeconds(211));
+        $this->assertSame(1, app(PushMonitorHealthService::class)->evaluate());
+        $this->assertSame(ComponentStatus::MajorOutage->value, $component->fresh()->status);
+        $this->assertDatabaseCount('check_results', 2);
+        $this->assertSame(1, Incident::query()->count());
+
+        CarbonImmutable::setTestNow($start->addSeconds(270));
+        $this->assertSame(0, app(PushMonitorHealthService::class)->evaluate());
+        $this->assertDatabaseCount('check_results', 2);
+        $this->assertSame(1, Incident::query()->count());
+    }
+
+    public function test_custom_heartbeat_timeouts_require_two_real_heartbeats_to_recover(): void
+    {
+        $start = CarbonImmutable::parse('2026-07-14 12:00:00 UTC');
+        CarbonImmutable::setTestNow($start);
+        $monitor = $this->monitor('heartbeat');
+        $secret = 'heartbeat-test-secret';
+        $monitor->update([
+            'config' => ['degraded_after_seconds' => 60, 'down_after_seconds' => 90],
+            'secret_config' => ['heartbeat_secret' => $secret],
+        ]);
+
+        CarbonImmutable::setTestNow($start->addSeconds(61));
+        app(PushMonitorHealthService::class)->evaluate();
+        $this->assertSame(ComponentStatus::Degraded->value, $monitor->component->fresh()->status);
+
+        CarbonImmutable::setTestNow($start->addSeconds(91));
+        app(PushMonitorHealthService::class)->evaluate();
+        $this->assertSame(ComponentStatus::MajorOutage->value, $monitor->component->fresh()->status);
+
+        CarbonImmutable::setTestNow($start->addSeconds(92));
+        $this->signed($monitor, $secret, [
+            'status' => 'ok',
+            'observed_at' => CarbonImmutable::now()->toIso8601String(),
+        ], 'recovery-heartbeat-one')->assertAccepted();
+        $this->assertSame(ComponentStatus::MajorOutage->value, $monitor->component->fresh()->status);
+
+        CarbonImmutable::setTestNow($start->addSeconds(93));
+        $this->signed($monitor, $secret, [
+            'status' => 'ok',
+            'observed_at' => CarbonImmutable::now()->toIso8601String(),
+        ], 'recovery-heartbeat-two')->assertAccepted();
+        $this->assertSame(ComponentStatus::Operational->value, $monitor->component->fresh()->status);
+        $this->assertSame(1, Incident::query()->whereNotNull('resolved_at')->count());
     }
 
     private function monitor(string $type, string $slug = 'heartbeat-monitor'): Monitor

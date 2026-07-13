@@ -1,0 +1,9 @@
+{
+  "endpoint": "https://status.example.com/api/probe/v1/heartbeat/123",
+  "secret_file": "/etc/server-status-page/secrets/local-heartbeat-example.secret",
+  "service": "example.service",
+  "udp_port": 12345,
+  "freshness_file": "/var/lib/example/last-update.db",
+  "freshness_max_age_seconds": 300,
+  "timeout": 5
+}

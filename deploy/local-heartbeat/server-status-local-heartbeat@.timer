@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Server Status local heartbeat (%i)
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+RandomizedDelaySec=6s
+AccuracySec=1s
+Unit=server-status-local-heartbeat@%i.service
+
+[Install]
+WantedBy=timers.target
