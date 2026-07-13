@@ -11,6 +11,7 @@ import type {
   StatusComponent,
   StatusGroup,
 } from "../types";
+import { fillHistory, getHistoryPeriod } from "../lib/status-history";
 
 const statusCopy: Record<ServiceStatus, { label: string; symbol: string }> = {
   operational: { label: "运行正常", symbol: "✓" },
@@ -48,21 +49,6 @@ function formatUptime(value: number | null) {
   return value === null ? "—" : `${value.toFixed(value >= 99 ? 2 : 1)}%`;
 }
 
-function fillHistory(history: DailyStatus[]): DailyStatus[] {
-  const rows = [...history].slice(-90);
-  while (rows.length < 90) {
-    const date = new Date();
-    date.setDate(date.getDate() - (90 - rows.length));
-    rows.unshift({
-      date: date.toISOString().slice(0, 10),
-      status: "unknown",
-      uptimePercent: null,
-      maintenance: false,
-    });
-  }
-  return rows;
-}
-
 function historyStatus(day: DailyStatus): ServiceStatus {
   return day.maintenance && day.status === "operational" ? "maintenance" : day.status;
 }
@@ -79,8 +65,8 @@ function StatusIcon({ status, small = false }: { status: ServiceStatus; small?: 
   );
 }
 
-function HistoryBars({ history, label }: { history: DailyStatus[]; label: string }) {
-  const bars = fillHistory(history);
+function HistoryBars({ history, label, anchor }: { history: DailyStatus[]; label: string; anchor: string }) {
+  const bars = fillHistory(history, anchor);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const visibleIndex = previewIndex ?? selectedIndex;
@@ -124,7 +110,7 @@ function HistoryBars({ history, label }: { history: DailyStatus[]; label: string
   );
 }
 
-function ComponentRow({ component }: { component: StatusComponent }) {
+function ComponentRow({ component, historyAnchor }: { component: StatusComponent; historyAnchor: string }) {
   return (
     <div className="component-row">
       <div className="component-title">
@@ -138,12 +124,12 @@ function ComponentRow({ component }: { component: StatusComponent }) {
         {component.latencyMs != null ? <span>{Math.round(component.latencyMs)} ms</span> : null}
         <strong>{formatUptime(component.uptimePercent)}</strong>
       </div>
-      <HistoryBars history={component.dailyHistory} label={component.name} />
+      <HistoryBars history={component.dailyHistory} label={component.name} anchor={historyAnchor} />
     </div>
   );
 }
 
-function GroupRow({ group }: { group: StatusGroup }) {
+function GroupRow({ group, historyAnchor }: { group: StatusGroup; historyAnchor: string }) {
   const [open, setOpen] = useState(false);
   return (
     <section className={`group-row${open ? " group-open" : ""}`}>
@@ -165,11 +151,11 @@ function GroupRow({ group }: { group: StatusGroup }) {
           {formatUptime(group.uptimePercent)} <small>uptime</small>
         </span>
       </button>
-      <HistoryBars history={group.dailyHistory} label={group.name} />
+      <HistoryBars history={group.dailyHistory} label={group.name} anchor={historyAnchor} />
       {open ? (
         <div className="component-list">
           {group.components.map((component) => (
-            <ComponentRow key={component.id} component={component} />
+            <ComponentRow key={component.id} component={component} historyAnchor={historyAnchor} />
           ))}
         </div>
       ) : null}
@@ -200,27 +186,20 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   const [historyLoading, setHistoryLoading] = useState(false);
   const copy = statusCopy[initialStatus.overallStatus];
   const visibleGroups = periodOffset === 0 ? initialStatus.groups : displayGroups;
-  const range = useMemo(() => {
-    const end = new Date();
-    end.setMonth(end.getMonth() + periodOffset * 3);
-    const start = new Date(end);
-    start.setMonth(start.getMonth() - 3);
-    const formatter = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short" });
-    return `${formatter.format(start)} – ${formatter.format(end)}`;
-  }, [periodOffset]);
+  const period = useMemo(
+    () => getHistoryPeriod(initialStatus.updatedAt, periodOffset),
+    [initialStatus.updatedAt, periodOffset],
+  );
 
   async function changePeriod(nextOffset: number) {
     setPeriodOffset(nextOffset);
     if (nextOffset === 0) {
       return;
     }
-    const to = new Date();
-    to.setMonth(to.getMonth() + nextOffset * 3);
-    const from = new Date(to);
-    from.setMonth(from.getMonth() - 3);
+    const nextPeriod = getHistoryPeriod(initialStatus.updatedAt, nextOffset);
     setHistoryLoading(true);
     try {
-      const response = await fetch(`/api/public/v1/history?from=${from.toISOString().slice(0, 10)}&to=${to.toISOString().slice(0, 10)}`, {
+      const response = await fetch(`/api/public/v1/history?from=${nextPeriod.from}&to=${nextPeriod.to}`, {
         headers: { Accept: "application/json" },
       });
       if (!response.ok) throw new Error("history unavailable");
@@ -369,7 +348,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
           <h2 id="system-status-title">System status</h2>
           <div className="period-control" aria-label="历史周期">
             <button type="button" onClick={() => void changePeriod(periodOffset - 1)} aria-label="上一周期">‹</button>
-            <span>{range}</span>
+            <span>{period.label}</span>
             <button type="button" onClick={() => void changePeriod(Math.min(0, periodOffset + 1))} disabled={periodOffset >= 0} aria-label="下一周期">›</button>
             {historyLoading ? <span className="history-loading" aria-live="polite">读取中</span> : null}
           </div>
@@ -382,7 +361,9 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         </div>
         <div className="groups-list">
           {visibleGroups.length ? (
-            visibleGroups.map((group) => <GroupRow key={group.id} group={group} />)
+            visibleGroups.map((group) => (
+              <GroupRow key={group.id} group={group} historyAnchor={period.to} />
+            ))
           ) : (
             <div className="empty-state">
               <span className="empty-orbit" aria-hidden="true" />
