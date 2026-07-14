@@ -106,6 +106,29 @@ test("admin audit log explains each record and uses PHP-style Shanghai timestamp
   assert.match(source, /`\$\{part\("year"\)\}-\$\{part\("month"\)\}-\$\{part\("day"\)\} \$\{part\("hour"\)\}:\$\{part\("minute"\)\}:\$\{part\("second"\)\}`/);
 });
 
+test("admin distinguishes components from probes and localizes operational state", async () => {
+  const source = await readFile(new URL("../app/admin/AdminConsole.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /id: "components", label: "状态组件"/);
+  assert.match(source, /<th>公开组件<\/th><th>当前状态<\/th><th>所属分组<\/th><th>状态更新时间<\/th>/);
+  assert.match(source, /<th>监控探针<\/th><th>类型<\/th><th>状态<\/th><th>频率<\/th><th>最近检查<\/th>/);
+  assert.match(source, /operational: "运行正常"/);
+  assert.match(source, /\["up", "healthy", "ok", "success", "pass", "online"/);
+  assert.match(source, /<th>Agent<\/th><th>状态<\/th><th>版本<\/th><th>最后在线<\/th>/);
+  assert.match(source, /section="overview"/);
+});
+
+test("admin explains self-hosted Laravel integrations and formats event times", async () => {
+  const source = await readFile(new URL("../app/admin/AdminConsole.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /label: "Laravel 应用探针"/);
+  assert.match(source, /接入你自己的 Laravel 项目/);
+  assert.match(source, /查看 Laravel 应用接入文档/);
+  assert.match(source, /系统不开放注册。当前自用只需保留 Owner/);
+  assert.match(source, /formatAdminDate\(event\.created_at\)/);
+  assert.match(source, /所有者（Owner）/);
+});
+
 test("removes all starter-only assets and metadata", async () => {
   const [page, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

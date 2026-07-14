@@ -656,6 +656,8 @@ textarea:focus-visible {
 .admin-card-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .admin-card-head h2 { margin: 0; font-size: 15px; }
 .admin-card-body { padding: 20px; }
+.section-note { margin: -10px 0 20px; padding: 12px 14px; border: 1px solid #d8eee8; border-radius: 10px; background: #f0faf7; color: #3f6259; font-size: 12px; line-height: 1.6; }
+.section-note a { display: inline-block; margin-left: 10px; color: #147a61; font-weight: 650; }
 .resource-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .resource-table th { padding: 10px 8px; color: var(--subtle); font-weight: 560; text-align: left; border-bottom: 1px solid var(--line); }
 .resource-table td { padding: 13px 8px; border-bottom: 1px solid #eff0f1; vertical-align: middle; }

@@ -21,8 +21,8 @@ type Resource = Record<string, unknown> & { id?: string | number };
 const sections: Array<{ id: Section; label: string; icon: string }> = [
   { id: "overview", label: "概览", icon: "◫" },
   { id: "monitors", label: "监控项", icon: "⌁" },
-  { id: "components", label: "状态页", icon: "▤" },
-  { id: "integrations", label: "Laravel 集成", icon: "⌘" },
+  { id: "components", label: "状态组件", icon: "▤" },
+  { id: "integrations", label: "Laravel 应用探针", icon: "⌘" },
   { id: "agents", label: "Agent", icon: "◇" },
   { id: "incidents", label: "事件", icon: "△" },
   { id: "maintenance", label: "维护窗口", icon: "◷" },
@@ -48,6 +48,13 @@ const endpoint: Record<Exclude<Section, "overview">, string> = {
 const title: Record<Section, string> = Object.fromEntries(
   sections.map((section) => [section.id, section.label]),
 ) as Record<Section, string>;
+
+const sectionHelp: Partial<Record<Section, string>> = {
+  components: "公开状态页展示的服务组件。组件本身不执行检查，其状态由关联的一个或多个监控项汇总得出。",
+  monitors: "实际执行 HTTP、数据库、队列等检查的探针。多个监控项可以共同决定一个状态组件的状态。",
+  integrations: "接入你自己的 Laravel 项目，用于接收 Queue、Scheduler 和关键任务心跳；这不是提供给外部用户的开放服务。",
+  users: "系统不开放注册。当前自用只需保留 Owner；Admin 和 Viewer 仅用于以后授权其他管理人员。",
+};
 
 function getCookie(name: string) {
   return document.cookie
@@ -96,10 +103,76 @@ function rowsFrom(payload: Record<string, unknown>): Resource[] {
 
 function statusClass(value: unknown) {
   const status = String(value ?? "unknown");
-  if (["up", "healthy", "operational", "active", "resolved"].includes(status)) return "operational";
-  if (["degraded", "degraded_performance", "warning", "investigating"].includes(status)) return "degraded";
-  if (["down", "major_outage", "failed"].includes(status)) return "major_outage";
+  if (["up", "healthy", "ok", "success", "pass", "online", "operational", "active", "enabled", "resolved", "completed"].includes(status)) return "operational";
+  if (["degraded", "degraded_performance", "partial_outage", "under_maintenance", "warning", "investigating", "scheduled", "in_progress"].includes(status)) return "degraded";
+  if (["down", "offline", "major_outage", "failed", "revoked"].includes(status)) return "major_outage";
   return "unknown";
+}
+
+function statusLabel(value: unknown) {
+  const status = String(value ?? "unknown");
+  const labels: Record<string, string> = {
+    operational: "运行正常",
+    up: "运行正常",
+    healthy: "运行正常",
+    ok: "正常",
+    success: "正常",
+    pass: "正常",
+    active: "已启用",
+    enabled: "已启用",
+    disabled: "已停用",
+    online: "在线",
+    offline: "离线",
+    pending: "待注册",
+    revoked: "已撤销",
+    degraded: "性能下降",
+    degraded_performance: "性能下降",
+    warning: "警告",
+    partial_outage: "部分中断",
+    major_outage: "严重中断",
+    down: "中断",
+    failed: "失败",
+    under_maintenance: "维护中",
+    unknown: "未知",
+    investigating: "调查中",
+    identified: "已定位",
+    monitoring: "监控恢复中",
+    resolved: "已恢复",
+    scheduled: "已计划",
+    in_progress: "进行中",
+    completed: "已完成",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
+}
+
+function rowStatus(row: Resource) {
+  return row.status ?? row.state ?? (row.enabled === false ? "disabled" : row.enabled === true ? "active" : "unknown");
+}
+
+function monitorTypeLabel(value: unknown) {
+  const type = String(value ?? "");
+  const labels: Record<string, string> = {
+    http: "HTTP(S)",
+    nextjs: "Next.js",
+    laravel: "Laravel",
+    squid: "Squid",
+    mysql: "MySQL",
+    postgresql: "PostgreSQL",
+    redis: "Redis",
+    reverb: "Laravel Reverb",
+    laravel_queue: "Laravel Queue",
+    laravel_scheduler: "Laravel Scheduler",
+    tcp: "TCP",
+    dns: "DNS",
+    tls: "TLS",
+    heartbeat: "Push Heartbeat",
+  };
+  return labels[type] ?? (type || "—");
+}
+
+function roleLabel(value: unknown) {
+  return ({ owner: "所有者", admin: "管理员", viewer: "只读用户" } as Record<string, string>)[String(value ?? "")] ?? String(value ?? "—");
 }
 
 function resourceLabel(row: Resource) {
@@ -208,9 +281,74 @@ function AuditTable({ rows }: { rows: Resource[] }) {
   );
 }
 
+function StatusCell({ value }: { value: unknown }) {
+  return <><span className={`mini-status status-${statusClass(value)}`} />{statusLabel(value)}</>;
+}
+
+function SpecializedTable({ rows, section }: { rows: Resource[]; section: Section }) {
+  if (section === "components") {
+    return <div style={{ overflowX: "auto" }}><table className="resource-table">
+      <thead><tr><th>公开组件</th><th>当前状态</th><th>所属分组</th><th>状态更新时间</th></tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>
+        <td><span className="resource-name">{resourceLabel(row)}</span>{row.description ? <div className="resource-sub">{String(row.description)}</div> : null}</td>
+        <td><StatusCell value={rowStatus(row)} /></td>
+        <td>组件组 #{String(row.component_group_id ?? "—")}</td>
+        <td><time dateTime={String(row.status_changed_at ?? row.updated_at ?? "")}>{formatAdminDate(row.status_changed_at ?? row.updated_at)}</time></td>
+      </tr>)}</tbody>
+    </table></div>;
+  }
+  if (section === "monitors") {
+    return <div style={{ overflowX: "auto" }}><table className="resource-table">
+      <thead><tr><th>监控探针</th><th>类型</th><th>状态</th><th>频率</th><th>最近检查</th></tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>
+        <td><span className="resource-name">{resourceLabel(row)}</span><div className="resource-sub">状态组件 #{String(row.component_id ?? "—")}</div></td>
+        <td>{monitorTypeLabel(row.type)}</td>
+        <td><StatusCell value={row.enabled === false ? "disabled" : rowStatus(row)} /></td>
+        <td>{row.interval_seconds ? `${String(row.interval_seconds)} 秒` : "—"}</td>
+        <td><time dateTime={String(row.last_checked_at ?? row.updated_at ?? "")}>{formatAdminDate(row.last_checked_at ?? row.updated_at)}</time></td>
+      </tr>)}</tbody>
+    </table></div>;
+  }
+  if (section === "agents") {
+    return <div style={{ overflowX: "auto" }}><table className="resource-table">
+      <thead><tr><th>Agent</th><th>状态</th><th>版本</th><th>最后在线</th></tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>
+        <td><span className="resource-name">{resourceLabel(row)}</span></td>
+        <td><StatusCell value={rowStatus(row)} /></td>
+        <td>{String(row.version ?? "—")}</td>
+        <td><time dateTime={String(row.last_seen_at ?? "")}>{formatAdminDate(row.last_seen_at)}</time></td>
+      </tr>)}</tbody>
+    </table></div>;
+  }
+  if (section === "integrations") {
+    return <div style={{ overflowX: "auto" }}><table className="resource-table">
+      <thead><tr><th>Laravel 应用</th><th>Application ID</th><th>状态</th><th>最后上报</th></tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>
+        <td><span className="resource-name">{resourceLabel(row)}</span></td>
+        <td>{String(row.application_id ?? "—")}</td>
+        <td><StatusCell value={rowStatus(row)} /></td>
+        <td><time dateTime={String(row.last_seen_at ?? row.created_at ?? "")}>{formatAdminDate(row.last_seen_at ?? row.created_at)}</time></td>
+      </tr>)}</tbody>
+    </table></div>;
+  }
+  if (section === "users") {
+    return <div style={{ overflowX: "auto" }}><table className="resource-table">
+      <thead><tr><th>用户</th><th>Email</th><th>角色</th><th>创建时间</th></tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>
+        <td><span className="resource-name">{String(row.name ?? "—")}</span></td>
+        <td>{String(row.email ?? "—")}</td>
+        <td>{roleLabel(row.role)}</td>
+        <td><time dateTime={String(row.created_at ?? "")}>{formatAdminDate(row.created_at)}</time></td>
+      </tr>)}</tbody>
+    </table></div>;
+  }
+  return null;
+}
+
 function ResourceTable({ rows, section }: { rows: Resource[]; section: Section }) {
   if (!rows.length) return <div className="admin-empty">暂无记录。创建后会从真实控制面数据自动更新。</div>;
   if (section === "audit") return <AuditTable rows={rows} />;
+  if (["components", "monitors", "agents", "integrations", "users"].includes(section)) return <SpecializedTable rows={rows} section={section} />;
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="resource-table">
@@ -223,8 +361,7 @@ function ResourceTable({ rows, section }: { rows: Resource[]; section: Section }
                 {resourceDetail(row) ? <div className="resource-sub">{resourceDetail(row)}</div> : null}
               </td>
               <td>
-                <span className={`mini-status status-${statusClass(row.status ?? row.state ?? (section === "agents" ? row.online : undefined))}`} />
-                {String(row.status ?? row.state ?? (row.enabled === false ? "disabled" : "active"))}
+                <StatusCell value={rowStatus(row)} />
               </td>
               <td><time dateTime={String(row.updated_at ?? row.last_seen_at ?? row.created_at ?? "")}>{formatAdminDate(row.updated_at ?? row.last_seen_at ?? row.created_at)}</time></td>
             </tr>
@@ -517,7 +654,7 @@ function CreateForm({ section, onCreated, onClose }: { section: Section; onCreat
         {section === "users" ? <>
           <Field label="姓名" name="name" required />
           <Field label="Email" name="email" type="email" required />
-          <Field label="角色" name="role" required><select id="field-role" name="role" defaultValue="viewer"><option value="owner">Owner</option><option value="admin">Admin</option><option value="viewer">Viewer</option></select></Field>
+          <Field label="角色" name="role" required><select id="field-role" name="role" defaultValue="viewer"><option value="owner">所有者（Owner）</option><option value="admin">管理员（Admin）</option><option value="viewer">只读用户（Viewer）</option></select></Field>
           <Field label="临时密码" name="password" type="password" required />
         </> : null}
       </div>
@@ -623,6 +760,10 @@ export function AdminConsole() {
 
         {notice ? <div className="maintenance-strip"><span className="maintenance-icon">✓</span><strong>{notice}</strong></div> : null}
         {error ? <div className="incident-card status-major_outage"><strong>控制面暂不可用</strong><p>{error}</p></div> : null}
+        {sectionHelp[section] ? <div className="section-note">
+          {sectionHelp[section]}
+          {section === "integrations" ? <a href="https://github.com/dogeow/server-status-page/tree/main/packages/laravel-probe#readme" target="_blank" rel="noreferrer">查看 Laravel 应用接入文档 →</a> : null}
+        </div> : null}
 
         {section === "overview" ? <>
           <div className="metrics-grid">
@@ -631,12 +772,12 @@ export function AdminConsole() {
           <div className="admin-grid">
             <article className="admin-card">
               <header className="admin-card-head"><h2>最近检查</h2><button className="secondary-button" type="button" onClick={() => changeSection("monitors")}>查看监控项</button></header>
-              <div className="admin-card-body"><ResourceTable rows={Array.isArray(overview.recent_checks) ? overview.recent_checks as Resource[] : []} section="monitors" /></div>
+              <div className="admin-card-body"><ResourceTable rows={Array.isArray(overview.recent_checks) ? overview.recent_checks as Resource[] : []} section="overview" /></div>
             </article>
             <article className="admin-card">
               <header className="admin-card-head"><h2>系统动态</h2></header>
               <div className="admin-card-body">
-                {Array.isArray(overview.recent_events) && overview.recent_events.length ? <ul className="event-list">{(overview.recent_events as Resource[]).map((event, index) => <li key={String(event.id ?? index)}><i /><div><strong>{resourceLabel(event)}</strong><p>{String(event.message ?? event.created_at ?? "已更新")}</p></div></li>)}</ul> : <div className="admin-empty">暂无最新事件</div>}
+                {Array.isArray(overview.recent_events) && overview.recent_events.length ? <ul className="event-list">{(overview.recent_events as Resource[]).map((event, index) => <li key={String(event.id ?? index)}><i /><div><strong>{resourceLabel(event)}</strong><p>{event.message ? `${String(event.message)} · ` : ""}<time dateTime={String(event.created_at ?? "")}>{formatAdminDate(event.created_at)}</time></p></div></li>)}</ul> : <div className="admin-empty">暂无最新事件</div>}
               </div>
             </article>
           </div>
