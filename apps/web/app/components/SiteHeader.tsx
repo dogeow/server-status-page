@@ -11,13 +11,6 @@ export function SiteHeader({ siteName }: { siteName: string }) {
         </span>
         <span>{siteName}</span>
       </Link>
-      <nav className="site-nav" aria-label="状态页导航">
-        <Link href="/">当前状态</Link>
-        <Link href="/history">历史记录</Link>
-        <Link className="nav-subscribe" href="/subscribe">
-          订阅更新
-        </Link>
-      </nav>
     </header>
   );
 }

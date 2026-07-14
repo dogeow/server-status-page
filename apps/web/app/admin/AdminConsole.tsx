@@ -13,7 +13,6 @@ type Section =
   | "maintenance"
   | "notifications"
   | "policies"
-  | "subscribers"
   | "users"
   | "audit";
 
@@ -29,7 +28,6 @@ const sections: Array<{ id: Section; label: string; icon: string }> = [
   { id: "maintenance", label: "维护窗口", icon: "◷" },
   { id: "notifications", label: "通知", icon: "↗" },
   { id: "policies", label: "告警策略", icon: "⌚" },
-  { id: "subscribers", label: "订阅者", icon: "◎" },
   { id: "users", label: "用户", icon: "♙" },
   { id: "audit", label: "审计日志", icon: "≡" },
 ];
@@ -43,7 +41,6 @@ const endpoint: Record<Exclude<Section, "overview">, string> = {
   maintenance: "maintenance-windows",
   notifications: "notification-channels",
   policies: "notification-policies",
-  subscribers: "subscribers",
   users: "users",
   audit: "audit-logs",
 };
@@ -488,7 +485,7 @@ export function AdminConsole() {
     ];
   }, [overview]);
 
-  const canCreate = !["overview", "subscribers", "audit"].includes(section);
+  const canCreate = !["overview", "audit"].includes(section);
 
   function changeSection(next: Section) {
     setSection(next);

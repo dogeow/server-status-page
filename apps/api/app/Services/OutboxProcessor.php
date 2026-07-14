@@ -9,7 +9,6 @@ use App\Models\NotificationChannel;
 use App\Models\NotificationDelivery;
 use App\Models\NotificationPolicy;
 use App\Models\OutboxEvent;
-use App\Models\Subscriber;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -64,16 +63,6 @@ class OutboxProcessor
 
     private function deliver(OutboxEvent $event): void
     {
-        if ($event->type === 'subscriber.confirmation_requested') {
-            $this->sendMail(
-                (string) $event->payload['email'],
-                (string) $event->payload['subject'],
-                "请打开以下链接确认状态通知订阅：\n\n".$event->payload['confirmation_url']."\n\n如非本人操作，可忽略本邮件。退订：\n".$event->payload['unsubscribe_url'],
-            );
-
-            return;
-        }
-
         $incident = $event->aggregate_type === 'incident' ? Incident::query()->with('components')->find($event->aggregate_id) : null;
         $pageId = $incident?->status_page_id ?: ($event->payload['status_page_id'] ?? null);
         if (! $pageId) {
@@ -100,9 +89,6 @@ class OutboxProcessor
             $this->deliverChannel($event, $policy->channel);
         }
 
-        if (in_array($event->type, ['incident.created', 'incident.updated', 'incident.resolved', 'maintenance.scheduled', 'maintenance.updated'], true)) {
-            $this->deliverSubscribers($event, (int) $pageId, $componentIds, $incident?->title ?: ($event->payload['title'] ?? '计划维护更新'));
-        }
     }
 
     private function deliverChannel(OutboxEvent $event, NotificationChannel $channel): void
@@ -143,37 +129,6 @@ class OutboxProcessor
         } catch (Throwable $exception) {
             $delivery->update(['status' => 'failed', 'attempts' => $delivery->attempts + 1, 'last_error' => Str::limit($exception->getMessage(), 2000, ''), 'next_attempt_at' => now()->addMinutes(1)]);
             throw $exception;
-        }
-    }
-
-    private function deliverSubscribers(OutboxEvent $event, int $pageId, $componentIds, string $subject): void
-    {
-        $subscribers = Subscriber::query()
-            ->where('status_page_id', $pageId)
-            ->whereNotNull('confirmed_at')
-            ->whereNull('unsubscribed_at')
-            ->with('components:id')
-            ->get();
-
-        foreach ($subscribers as $subscriber) {
-            if ($subscriber->components->isNotEmpty() && $subscriber->components->pluck('id')->intersect($componentIds)->isEmpty()) {
-                continue;
-            }
-            $delivery = NotificationDelivery::query()->firstOrCreate(
-                ['outbox_event_id' => $event->id, 'notification_channel_id' => null, 'recipient' => $subscriber->email],
-                [
-                    'id' => (string) Str::uuid(),
-                    'aggregate_type' => $event->aggregate_type,
-                    'aggregate_id' => $event->aggregate_id,
-                    'event_type' => $event->type,
-                    'payload' => $event->payload,
-                    'status' => 'pending',
-                ],
-            );
-            if ($delivery->status !== 'delivered') {
-                $this->sendMail($subscriber->email, $subject, $this->message($event));
-                $delivery->update(['status' => 'delivered', 'delivered_at' => now(), 'attempts' => $delivery->attempts + 1]);
-            }
         }
     }
 

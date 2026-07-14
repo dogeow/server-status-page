@@ -8,7 +8,7 @@
 
 - Ubuntu 24.04 LTS，至少 2 核 CPU、4 GB 内存、30 GB SSD。
 - 一个已解析到 VPS 公网 IP 的域名，例如 `status.example.com`。
-- 可用的 SMTP 账号，用于管理员告警和公众订阅邮件。
+- 可用的 SMTP 账号，用于管理员告警邮件。
 - 控制面尽量不要和被监控业务部署在同一台主机或同一故障域。
 
 在 DNS 服务商处添加记录：
@@ -139,7 +139,7 @@ MAIL_PORT=465
 MAIL_SCHEME=smtps
 ```
 
-SMTP 提供商如果有不同要求，以其文档为准。未配置 SMTP 时可暂时保留 `MAIL_MAILER=log`，但公众订阅确认和真实邮件告警不会送达。
+SMTP 提供商如果有不同要求，以其文档为准。未配置 SMTP 时可暂时保留 `MAIL_MAILER=log`，但真实邮件告警不会送达。
 
 ## 5. 启动服务
 

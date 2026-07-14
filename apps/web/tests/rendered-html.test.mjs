@@ -30,17 +30,15 @@ test("server-renders the public status surface without fabricated data", async (
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
-test("ships real status, subscription and admin routes", async () => {
+test("ships the public status and admin routes without duplicate public pages", async () => {
   const [history, subscribe, admin] = await Promise.all([
     render("/history"),
     render("/subscribe"),
     render("/admin/login"),
   ]);
-  assert.equal(history.status, 200);
-  assert.equal(subscribe.status, 200);
+  assert.equal(history.status, 404);
+  assert.equal(subscribe.status, 404);
   assert.equal(admin.status, 200);
-  assert.match(await history.text(), /历史记录/);
-  assert.match(await subscribe.text(), /订阅状态更新/);
   assert.match(await admin.text(), /进入管理后台/);
 });
 
@@ -74,8 +72,8 @@ test("mobile status layout keeps the hero compact and all 90 bars inside the car
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const mobile = css.slice(css.indexOf("@media (max-width: 640px)"));
   assert.match(mobile, /\.overall-banner\s*\{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\)/);
-  assert.match(mobile, /\.overall-banner\s*\{[\s\S]*?padding: 12px 14px/);
-  assert.match(mobile, /\.overall-banner h1\s*\{[^}]*font-size: 26px/);
+  assert.match(mobile, /\.overall-banner\s*\{[\s\S]*?padding: 8px 12px/);
+  assert.match(mobile, /\.overall-banner h1\s*\{[^}]*font-size: 23px/);
   assert.match(mobile, /\.history-bars\s*\{[\s\S]*?min-width: 0/);
   assert.match(mobile, /grid-template-columns: repeat\(90, minmax\(0, 1fr\)\)/);
   assert.match(mobile, /\.status-card\s*\{[^}]*margin-top: 18px/);
@@ -88,8 +86,8 @@ test("desktop public layout uses the same narrow column width as the reference s
   const tablet = css.slice(css.indexOf("@media (max-width: 900px)"));
 
   assert.match(css, /\.site-shell\s*\{[^}]*width: min\(718px, calc\(100% - 32px\)\)/);
-  assert.match(css, /\.overall-banner\s*\{[^}]*min-height: 136px[^}]*padding: 20px 28px/);
-  assert.match(css, /\.overall-banner h1\s*\{[^}]*font-size: clamp\(30px, 3\.4vw, 40px\)/);
+  assert.match(css, /\.overall-banner\s*\{[^}]*min-height: 112px[^}]*padding: 14px 24px/);
+  assert.match(css, /\.overall-banner h1\s*\{[^}]*font-size: clamp\(28px, 3vw, 34px\)/);
   assert.match(css, /\.status-card-header\s*\{[^}]*flex-wrap: wrap/);
   assert.match(css, /\.legend\s*\{[^}]*width: 100%[^}]*margin-left: 0/);
   assert.match(css, /\.history-bars\s*\{[\s\S]*?gap: clamp\(2px, 0\.28vw, 4px\)/);

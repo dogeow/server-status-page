@@ -329,7 +329,6 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
               <p className="eyebrow">Incidents</p>
               <h2 id="active-incidents-title">进行中的事件</h2>
             </div>
-            <Link href="/history">查看全部</Link>
           </div>
           <div className="incident-grid">
             {initialStatus.incidents.map((incident) => (
@@ -378,11 +377,6 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         </div>
       </section>
 
-      <div className="history-action">
-        <Link className="secondary-button" href="/history">
-          <span aria-hidden="true">▦</span> 查看历史记录
-        </Link>
-      </div>
     </>
   );
 }

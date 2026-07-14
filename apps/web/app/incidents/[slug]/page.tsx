@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SiteHeader } from "../../components/SiteHeader";
 import { getIncident, getPublicStatus } from "../../lib/api";
@@ -51,7 +52,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ slug:
           ))}
         </ol>
       </article>
-      <div className="history-action"><a className="secondary-button" href="/history">返回历史记录</a></div>
+      <div className="history-action"><Link className="secondary-button" href="/">返回状态页</Link></div>
     </main>
   );
 }

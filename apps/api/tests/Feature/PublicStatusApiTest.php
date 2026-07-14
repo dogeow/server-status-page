@@ -5,9 +5,7 @@ namespace Tests\Feature;
 use App\Models\Component;
 use App\Models\ComponentGroup;
 use App\Models\DailyRollup;
-use App\Models\OutboxEvent;
 use App\Models\StatusPage;
-use App\Models\Subscriber;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DemoSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -83,21 +81,11 @@ class PublicStatusApiTest extends TestCase
         $this->travelBack();
     }
 
-    public function test_subscription_requires_double_opt_in_and_can_be_confirmed(): void
+    public function test_public_subscription_endpoints_are_disabled(): void
     {
-        $this->seed(DemoSeeder::class);
-
         $this->postJson('/api/public/v1/subscriptions', ['email' => 'ops@example.com', 'page' => 'main'])
-            ->assertAccepted();
-
-        $subscriber = Subscriber::query()->firstOrFail();
-        $this->assertNull($subscriber->confirmed_at);
-        $event = OutboxEvent::query()->where('type', 'subscriber.confirmation_requested')->firstOrFail();
-        $token = basename($event->payload['confirmation_url']);
-
-        $this->getJson('/api/public/v1/subscriptions/confirm/'.$token)->assertOk();
-        $this->assertNotNull($subscriber->fresh()->confirmed_at);
-        $this->assertNull($subscriber->fresh()->confirmation_token_hash);
+            ->assertNotFound();
+        $this->getJson('/api/public/v1/subscriptions/confirm/disabled')->assertNotFound();
     }
 
     public function test_history_contract_contains_month_navigation_aggregates_and_stable_etag(): void

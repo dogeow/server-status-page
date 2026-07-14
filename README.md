@@ -141,7 +141,7 @@ STATUS_PROBE_SECRET_CURRENT=<shown-once-secret>
 - 配置/认证错误会通知管理员但不会公开为业务中断。Agent 离线显示未知，不会把其全部目标标成 Down。
 - 确认故障自动创建公开事件；管理员可以覆盖级别、文案和阶段。
 - 维护期间继续采样、抑制故障告警，且默认从 uptime 中排除。
-- SMTP 用于管理员与公众双重确认订阅；Webhook 包含 delivery ID，并使用 `X-Status-Signature: sha256=<hmac>` 签名。
+- SMTP 用于管理员告警；Webhook 包含 delivery ID，并使用 `X-Status-Signature: sha256=<hmac>` 签名。
 - 通知策略支持组件过滤、事件过滤、静默时段和重复提醒间隔；恢复通知不受静默时段阻止。
 
 ## 数据保留与运维
@@ -167,7 +167,7 @@ docker compose exec api php artisan status:ensure-partitions
 
 ## API 概览
 
-- Public：`GET /api/public/v1/status`、`GET /history`、事件详情、订阅确认与退订。
+- Public：`GET /api/public/v1/status`、`GET /api/public/v1/history` 和事件详情；首页直接展示并切换历史周期。
 - Admin：`/api/admin/v1/*`，使用 Sanctum 同源 session，Owner/Admin/Viewer 服务端鉴权。
 - Agent：enroll、ETag plan、heartbeat 与 results batch；每次请求使用 timestamp + nonce + raw-body SHA256 的 HMAC。
 - Laravel Probe：使用独立 `STATUS-PROBE-HMAC-SHA256-V1` canonical、current/next secret 和 replay nonce。

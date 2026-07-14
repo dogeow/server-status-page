@@ -15,7 +15,6 @@ use App\Models\NotificationChannel;
 use App\Models\NotificationPolicy;
 use App\Models\OutboxEvent;
 use App\Models\StatusPage;
-use App\Models\Subscriber;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -38,12 +37,11 @@ class ResourceController extends Controller
         'maintenance-windows' => MaintenanceWindow::class,
         'notification-channels' => NotificationChannel::class,
         'notification-policies' => NotificationPolicy::class,
-        'subscribers' => Subscriber::class,
         'users' => User::class,
         'audit-logs' => AuditLog::class,
     ];
 
-    private const READ_ONLY = ['audit-logs', 'subscribers'];
+    private const READ_ONLY = ['audit-logs'];
 
     public function index(Request $request, string $resource): JsonResponse
     {
@@ -57,7 +55,7 @@ class ResourceController extends Controller
         }
 
         if ($request->filled('search')) {
-            $column = $resource === 'users' || $resource === 'subscribers' ? 'email' : ($resource === 'audit-logs' ? 'action' : 'name');
+            $column = $resource === 'users' ? 'email' : ($resource === 'audit-logs' ? 'action' : 'name');
             $query->where($column, 'like', '%'.$request->query('search').'%');
         }
 

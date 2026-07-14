@@ -1,6 +1,6 @@
 # Server Status Page API
 
-Laravel 控制面负责监控计划、Agent HMAC 接口、状态机、事件、维护、订阅、通知 outbox、历史聚合以及 Reverb 广播。PostgreSQL 是唯一事实源；Redis/Reverb 故障不会阻断状态评估与 Email/Webhook。
+Laravel 控制面负责监控计划、Agent HMAC 接口、状态机、事件、维护、管理员通知 outbox、历史聚合以及 Reverb 广播。PostgreSQL 是唯一事实源；Redis/Reverb 故障不会阻断状态评估与 Email/Webhook。
 
 ## 本地验证
 
