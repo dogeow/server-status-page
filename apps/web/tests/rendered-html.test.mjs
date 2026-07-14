@@ -74,6 +74,8 @@ test("mobile status layout keeps the hero compact and all 90 bars inside the car
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const mobile = css.slice(css.indexOf("@media (max-width: 640px)"));
   assert.match(mobile, /\.overall-banner\s*\{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\)/);
+  assert.match(mobile, /\.overall-banner\s*\{[\s\S]*?padding: 12px 14px/);
+  assert.match(mobile, /\.overall-banner h1\s*\{[^}]*font-size: 26px/);
   assert.match(mobile, /\.history-bars\s*\{[\s\S]*?min-width: 0/);
   assert.match(mobile, /grid-template-columns: repeat\(90, minmax\(0, 1fr\)\)/);
   assert.match(mobile, /\.status-card\s*\{[^}]*margin-top: 18px/);
@@ -86,6 +88,8 @@ test("desktop public layout uses the same narrow column width as the reference s
   const tablet = css.slice(css.indexOf("@media (max-width: 900px)"));
 
   assert.match(css, /\.site-shell\s*\{[^}]*width: min\(718px, calc\(100% - 32px\)\)/);
+  assert.match(css, /\.overall-banner\s*\{[^}]*min-height: 136px[^}]*padding: 20px 28px/);
+  assert.match(css, /\.overall-banner h1\s*\{[^}]*font-size: clamp\(30px, 3\.4vw, 40px\)/);
   assert.match(css, /\.status-card-header\s*\{[^}]*flex-wrap: wrap/);
   assert.match(css, /\.legend\s*\{[^}]*width: 100%[^}]*margin-left: 0/);
   assert.match(css, /\.history-bars\s*\{[\s\S]*?gap: clamp\(2px, 0\.28vw, 4px\)/);

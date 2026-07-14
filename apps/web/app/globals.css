@@ -129,12 +129,12 @@ textarea:focus-visible {
 .overall-banner {
   position: relative;
   overflow: hidden;
-  min-height: 180px;
+  min-height: 136px;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 24px;
-  padding: 36px 40px;
+  gap: 20px;
+  padding: 20px 28px;
   border: 1px solid rgba(32, 189, 145, 0.24);
   border-radius: 22px;
   background:
@@ -186,16 +186,16 @@ textarea:focus-visible {
 
 .overall-banner h1 {
   margin: 0;
-  font-size: clamp(30px, 4vw, 48px);
+  font-size: clamp(30px, 3.4vw, 40px);
   line-height: 1.08;
   letter-spacing: -0.045em;
 }
 
 .overall-banner p:not(.eyebrow) {
   max-width: 660px;
-  margin: 13px 0 0;
+  margin: 8px 0 0;
   color: var(--muted);
-  line-height: 1.65;
+  line-height: 1.45;
 }
 
 .last-updated {
@@ -702,7 +702,7 @@ textarea:focus-visible {
 
 @media (max-width: 900px) {
   .site-shell { width: min(100% - 28px, 718px); }
-  .overall-banner { grid-template-columns: auto 1fr; padding: 30px; }
+  .overall-banner { grid-template-columns: auto 1fr; padding: 20px 28px; }
   .last-updated { grid-column: 2; justify-self: start; }
   .history-bars { min-width: 0; }
   .group-row { overflow: hidden; }
@@ -730,14 +730,14 @@ textarea:focus-visible {
   .overall-banner {
     min-height: 0;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 9px 12px;
-    padding: 18px 16px;
+    gap: 6px 10px;
+    padding: 12px 14px;
     border-radius: 16px;
   }
-  .overall-banner > .status-icon { width: 32px; height: 32px; grid-row: 1; align-self: start; font-size: 18px; }
+  .overall-banner > .status-icon { width: 30px; height: 30px; grid-row: 1; align-self: start; font-size: 17px; }
   .overall-banner .eyebrow { margin-bottom: 3px; font-size: 9px; }
-  .overall-banner h1 { font-size: 28px; }
-  .overall-banner p:not(.eyebrow) { margin-top: 6px; font-size: 13px; line-height: 1.45; }
+  .overall-banner h1 { font-size: 26px; }
+  .overall-banner p:not(.eyebrow) { margin-top: 4px; font-size: 12px; line-height: 1.35; }
   .last-updated { grid-column: 2; align-self: start; gap: 6px; font-size: 11px; }
   .status-card { margin-top: 18px; border-radius: 12px; }
   .status-card-header { min-height: 0; padding: 16px; gap: 8px 12px; }
