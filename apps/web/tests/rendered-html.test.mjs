@@ -81,6 +81,18 @@ test("mobile status layout keeps the hero compact and all 90 bars inside the car
   assert.match(mobile, /\.history-bar:nth-last-child\(-n \+ 25\) \.history-tooltip/);
 });
 
+test("desktop public layout uses the same narrow column width as the reference status page", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const tablet = css.slice(css.indexOf("@media (max-width: 900px)"));
+
+  assert.match(css, /\.site-shell\s*\{[^}]*width: min\(718px, calc\(100% - 32px\)\)/);
+  assert.match(css, /\.status-card-header\s*\{[^}]*flex-wrap: wrap/);
+  assert.match(css, /\.legend\s*\{[^}]*width: 100%[^}]*margin-left: 0/);
+  assert.match(css, /\.history-bars\s*\{[\s\S]*?gap: clamp\(2px, 0\.28vw, 4px\)/);
+  assert.match(tablet, /\.site-shell\s*\{[^}]*width: min\(100% - 28px, 718px\)/);
+  assert.match(tablet, /\.history-bars\s*\{[^}]*min-width: 0/);
+});
+
 test("removes all starter-only assets and metadata", async () => {
   const [page, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

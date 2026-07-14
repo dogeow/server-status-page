@@ -63,7 +63,7 @@ textarea:focus-visible {
 }
 
 .site-shell {
-  width: min(1320px, calc(100% - 48px));
+  width: min(718px, calc(100% - 32px));
   margin: 0 auto;
   padding-bottom: 48px;
 }
@@ -305,6 +305,7 @@ textarea:focus-visible {
 .status-card-header {
   min-height: 104px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 28px;
   padding: 26px 32px;
@@ -342,7 +343,8 @@ textarea:focus-visible {
 .history-loading { color: var(--operational); font-size: 11px; }
 
 .legend {
-  margin-left: auto;
+  width: 100%;
+  margin-left: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
@@ -417,7 +419,7 @@ textarea:focus-visible {
   width: 100%;
   display: grid;
   grid-template-columns: repeat(90, minmax(3px, 1fr));
-  gap: clamp(2px, 0.28vw, 5px);
+  gap: clamp(2px, 0.28vw, 4px);
   margin-top: 22px;
   overflow: visible;
 }
@@ -699,12 +701,10 @@ textarea:focus-visible {
 .admin-login .form-card > p { margin: 9px 0 25px; color: var(--muted); }
 
 @media (max-width: 900px) {
-  .site-shell { width: min(100% - 28px, 760px); }
+  .site-shell { width: min(100% - 28px, 718px); }
   .overall-banner { grid-template-columns: auto 1fr; padding: 30px; }
   .last-updated { grid-column: 2; justify-self: start; }
-  .status-card-header { flex-wrap: wrap; }
-  .legend { width: 100%; margin-left: 0; }
-  .history-bars { min-width: 800px; }
+  .history-bars { min-width: 0; }
   .group-row { overflow: hidden; }
   .group-row > .history-bars,
   .component-row > .history-bars { overflow: visible; transform-origin: left; }
