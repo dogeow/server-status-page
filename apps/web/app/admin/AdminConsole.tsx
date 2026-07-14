@@ -113,8 +113,104 @@ function resourceDetail(row: Resource) {
     .join(" · ");
 }
 
+function formatAdminDate(value: unknown) {
+  if (!value) return "—";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "00";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
+}
+
+function auditValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Resource : {};
+}
+
+function auditActionLabel(value: unknown) {
+  const action = String(value ?? "");
+  const labels: Record<string, string> = {
+    create: "创建",
+    update: "更新",
+    delete: "删除",
+    merge: "合并组件分组",
+    "credentials.update": "更新登录账号",
+    "ops.monitor_inventory_sync": "同步监控清单",
+  };
+  return labels[action] ?? (action || "未知操作");
+}
+
+function auditTypeLabel(value: unknown) {
+  const type = String(value ?? "").split("\\").pop() ?? "";
+  const labels: Record<string, string> = {
+    User: "用户",
+    ComponentGroup: "组件分组",
+    Component: "组件",
+    StatusPage: "状态页",
+    Monitor: "监控项",
+    Agent: "Agent",
+    Incident: "事件",
+    MaintenanceWindow: "维护窗口",
+    NotificationChannel: "通知渠道",
+    NotificationPolicy: "告警策略",
+  };
+  return labels[type] ?? (type || "记录");
+}
+
+function auditTargetLabel(row: Resource) {
+  const before = auditValue(row.before);
+  const after = auditValue(row.after);
+  if (row.action === "merge") {
+    const source = before.name;
+    const target = after.target_group_name;
+    if (source && target) return `${String(source)} → ${String(target)}`;
+  }
+  if (row.action === "credentials.update" && before.email && after.email) {
+    return `${String(before.email)} → ${String(after.email)}`;
+  }
+  const label = after.name ?? after.title ?? after.email ?? before.name ?? before.title ?? before.email;
+  if (label) return String(label);
+  return `${auditTypeLabel(row.auditable_type)} #${String(row.auditable_id ?? "—")}`;
+}
+
+function AuditTable({ rows }: { rows: Resource[] }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table className="resource-table">
+        <thead><tr><th>操作</th><th>对象</th><th>操作者</th><th>时间</th></tr></thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={String(row.id ?? index)}>
+              <td>
+                <span className="resource-name">{auditActionLabel(row.action)}</span>
+                <div className="resource-sub">{String(row.action ?? "未知")}</div>
+              </td>
+              <td>
+                <span className="resource-name">{auditTargetLabel(row)}</span>
+                <div className="resource-sub">{auditTypeLabel(row.auditable_type)} #{String(row.auditable_id ?? "—")}</div>
+              </td>
+              <td>{row.user_id ? `用户 #${String(row.user_id)}` : "系统"}</td>
+              <td><time dateTime={String(row.created_at ?? "")}>{formatAdminDate(row.created_at)}</time></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ResourceTable({ rows, section }: { rows: Resource[]; section: Section }) {
   if (!rows.length) return <div className="admin-empty">暂无记录。创建后会从真实控制面数据自动更新。</div>;
+  if (section === "audit") return <AuditTable rows={rows} />;
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="resource-table">
@@ -130,7 +226,7 @@ function ResourceTable({ rows, section }: { rows: Resource[]; section: Section }
                 <span className={`mini-status status-${statusClass(row.status ?? row.state ?? (section === "agents" ? row.online : undefined))}`} />
                 {String(row.status ?? row.state ?? (row.enabled === false ? "disabled" : "active"))}
               </td>
-              <td>{String(row.updated_at ?? row.last_seen_at ?? row.created_at ?? "—")}</td>
+              <td><time dateTime={String(row.updated_at ?? row.last_seen_at ?? row.created_at ?? "")}>{formatAdminDate(row.updated_at ?? row.last_seen_at ?? row.created_at)}</time></td>
             </tr>
           ))}
         </tbody>

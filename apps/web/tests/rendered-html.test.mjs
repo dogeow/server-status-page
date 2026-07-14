@@ -95,6 +95,17 @@ test("desktop public layout uses the same narrow column width as the reference s
   assert.match(tablet, /\.history-bars\s*\{[^}]*min-width: 0/);
 });
 
+test("admin audit log explains each record and uses PHP-style Shanghai timestamps", async () => {
+  const source = await readFile(new URL("../app/admin/AdminConsole.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /<th>操作<\/th><th>对象<\/th><th>操作者<\/th><th>时间<\/th>/);
+  assert.match(source, /if \(section === "audit"\) return <AuditTable rows=\{rows\} \/>/);
+  assert.match(source, /"credentials\.update": "更新登录账号"/);
+  assert.match(source, /merge: "合并组件分组"/);
+  assert.match(source, /timeZone: "Asia\/Shanghai"/);
+  assert.match(source, /`\$\{part\("year"\)\}-\$\{part\("month"\)\}-\$\{part\("day"\)\} \$\{part\("hour"\)\}:\$\{part\("minute"\)\}:\$\{part\("second"\)\}`/);
+});
+
 test("removes all starter-only assets and metadata", async () => {
   const [page, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
