@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type {
   DailyStatus,
+  DailyStatusPeriod,
   Incident,
   PublicStatusPayload,
   ServiceStatus,
@@ -53,6 +54,65 @@ function historyStatus(day: DailyStatus): ServiceStatus {
   return day.maintenance && day.status === "operational" ? "maintenance" : day.status;
 }
 
+function normalizeHistoryPeriods(value: unknown): DailyStatusPeriod[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((item) => {
+    const row = (item ?? {}) as Record<string, unknown>;
+    const duration = Number(row.duration_seconds ?? row.durationSeconds ?? 0);
+
+    return {
+      status: clientStatus(row.status),
+      startedAt: String(row.started_at ?? row.startedAt ?? ""),
+      endedAt: row.ended_at || row.endedAt ? String(row.ended_at ?? row.endedAt) : null,
+      durationSeconds: Number.isFinite(duration) ? Math.max(0, duration) : 0,
+      ongoing: Boolean(row.ongoing),
+      componentName: row.component_name || row.componentName
+        ? String(row.component_name ?? row.componentName)
+        : null,
+    };
+  }).filter((period) => period.startedAt !== "");
+}
+
+function formatHistoryTime(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
+
+function localDateKey(value: string, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function formatStatusPeriod(period: DailyStatusPeriod, date: string, timezone: string) {
+  const start = formatHistoryTime(period.startedAt, timezone);
+  if (period.ongoing || !period.endedAt) return `${start} – 至今`;
+
+  const end = formatHistoryTime(period.endedAt, timezone);
+  return `${start} – ${localDateKey(period.endedAt, timezone) === date ? end : `次日 ${end}`}`;
+}
+
+function formatDuration(seconds: number) {
+  const totalMinutes = Math.max(0, Math.floor(seconds / 60));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}天${hours > 0 ? `${hours}小时` : ""}${minutes > 0 ? `${minutes}分` : ""}`;
+  if (hours > 0) return `${hours}小时${minutes > 0 ? `${minutes}分` : ""}`;
+  if (totalMinutes > 0) return `${totalMinutes}分`;
+  return `${Math.max(0, Math.floor(seconds))}秒`;
+}
+
 function StatusIcon({ status, small = false }: { status: ServiceStatus; small?: boolean }) {
   const copy = statusCopy[status];
   return (
@@ -65,7 +125,7 @@ function StatusIcon({ status, small = false }: { status: ServiceStatus; small?: 
   );
 }
 
-function HistoryBars({ history, label, anchor }: { history: DailyStatus[]; label: string; anchor: string }) {
+function HistoryBars({ history, label, anchor, timezone }: { history: DailyStatus[]; label: string; anchor: string; timezone: string }) {
   const bars = fillHistory(history, anchor);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
@@ -79,7 +139,12 @@ function HistoryBars({ history, label, anchor }: { history: DailyStatus[]; label
           ? "暂无监控数据"
           : statusCopy[status].label;
         const uptimeLabel = day.uptimePercent == null ? null : `${day.uptimePercent.toFixed(2)}% uptime`;
-        const detailLabel = `${day.date} · ${statusLabel}${uptimeLabel ? ` · ${uptimeLabel}` : ""}`;
+        const periods = day.statusPeriods ?? [];
+        const periodLabel = periods.map((period) => {
+          const component = period.componentName ? `${period.componentName} · ` : "";
+          return `${component}${statusCopy[period.status].label} · ${formatStatusPeriod(period, day.date, timezone)} · 持续 ${formatDuration(period.durationSeconds)}`;
+        }).join("；");
+        const detailLabel = `${day.date} · ${statusLabel}${uptimeLabel ? ` · ${uptimeLabel}` : ""}${periodLabel ? ` · ${periodLabel}` : ""}`;
         const tooltipAlignment = index < 5 ? "start" : index > bars.length - 6 ? "end" : "center";
 
         return (
@@ -100,7 +165,18 @@ function HistoryBars({ history, label, anchor }: { history: DailyStatus[]; label
             {visibleIndex === index ? (
               <span className="history-tooltip" role="tooltip">
                 <strong>{day.date}</strong>
-                <span>{statusLabel}{uptimeLabel ? ` · ${uptimeLabel}` : ""}</span>
+                <span className="history-tooltip-summary">{statusLabel}{uptimeLabel ? ` · ${uptimeLabel}` : ""}</span>
+                {periods.length ? (
+                  <span className="history-tooltip-periods">
+                    {periods.slice(0, 3).map((period, periodIndex) => (
+                      <span className="history-tooltip-period" key={`${period.startedAt}-${periodIndex}`}>
+                        <strong>{period.componentName ? `${period.componentName} · ` : ""}{statusCopy[period.status].label}</strong>
+                        <span>{formatStatusPeriod(period, day.date, timezone)} · 持续 {formatDuration(period.durationSeconds)}</span>
+                      </span>
+                    ))}
+                    {periods.length > 3 ? <span>另有 {periods.length - 3} 个异常时段</span> : null}
+                  </span>
+                ) : null}
               </span>
             ) : null}
           </button>
@@ -110,7 +186,7 @@ function HistoryBars({ history, label, anchor }: { history: DailyStatus[]; label
   );
 }
 
-function ComponentRow({ component, historyAnchor }: { component: StatusComponent; historyAnchor: string }) {
+function ComponentRow({ component, historyAnchor, timezone }: { component: StatusComponent; historyAnchor: string; timezone: string }) {
   return (
     <div className="component-row">
       <div className="component-title">
@@ -124,12 +200,12 @@ function ComponentRow({ component, historyAnchor }: { component: StatusComponent
         {component.latencyMs != null ? <span>{Math.round(component.latencyMs)} ms</span> : null}
         <strong>{formatUptime(component.uptimePercent)}</strong>
       </div>
-      <HistoryBars history={component.dailyHistory} label={component.name} anchor={historyAnchor} />
+      <HistoryBars history={component.dailyHistory} label={component.name} anchor={historyAnchor} timezone={timezone} />
     </div>
   );
 }
 
-function GroupRow({ group, historyAnchor }: { group: StatusGroup; historyAnchor: string }) {
+function GroupRow({ group, historyAnchor, timezone }: { group: StatusGroup; historyAnchor: string; timezone: string }) {
   const [open, setOpen] = useState(false);
   return (
     <section className={`group-row${open ? " group-open" : ""}`}>
@@ -151,11 +227,11 @@ function GroupRow({ group, historyAnchor }: { group: StatusGroup; historyAnchor:
           {formatUptime(group.uptimePercent)} <small>uptime</small>
         </span>
       </button>
-      <HistoryBars history={group.dailyHistory} label={group.name} anchor={historyAnchor} />
+      <HistoryBars history={group.dailyHistory} label={group.name} anchor={historyAnchor} timezone={timezone} />
       {open ? (
         <div className="component-list">
           {group.components.map((component) => (
-            <ComponentRow key={component.id} component={component} historyAnchor={historyAnchor} />
+            <ComponentRow key={component.id} component={component} historyAnchor={historyAnchor} timezone={timezone} />
           ))}
         </div>
       ) : null}
@@ -221,6 +297,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
               status: clientStatus(day.status),
               uptimePercent: day.uptime_percent == null ? null : Number(day.uptime_percent),
               maintenance: Boolean(day.maintenance),
+              statusPeriods: normalizeHistoryPeriods(day.status_periods ?? day.statusPeriods),
             })),
             components: Array.isArray(group.components)
               ? group.components.map((item, componentIndex) => {
@@ -240,6 +317,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
                       status: clientStatus(day.status),
                       uptimePercent: day.uptime_percent == null ? null : Number(day.uptime_percent),
                       maintenance: Boolean(day.maintenance),
+                      statusPeriods: normalizeHistoryPeriods(day.status_periods ?? day.statusPeriods),
                     })),
                   };
                 })
@@ -361,7 +439,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         <div className="groups-list">
           {visibleGroups.length ? (
             visibleGroups.map((group) => (
-              <GroupRow key={group.id} group={group} historyAnchor={period.to} />
+              <GroupRow key={group.id} group={group} historyAnchor={period.to} timezone={initialStatus.statusPage.timezone} />
             ))
           ) : (
             <div className="empty-state">

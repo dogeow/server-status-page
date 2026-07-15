@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Component;
 use App\Models\ComponentGroup;
 use App\Models\DailyRollup;
+use App\Models\StatusInterval;
 use App\Models\StatusPage;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DemoSeeder;
@@ -27,7 +28,7 @@ class PublicStatusApiTest extends TestCase
             ->assertJsonCount(3, 'groups')
             ->assertJsonCount(90, 'groups.0.daily_history')
             ->assertJsonCount(90, 'groups.0.components.0.daily_history')
-            ->assertJsonStructure(['groups' => [['components' => [['uptime_percent', 'latency_ms', 'daily_history']]]], 'incidents', 'maintenances']);
+            ->assertJsonStructure(['groups' => [['daily_history' => [['status_periods']], 'components' => [['uptime_percent', 'latency_ms', 'daily_history' => [['status_periods']]]]]], 'incidents', 'maintenances']);
 
         $this->assertStringContainsString('stale-if-error=86400', $response->headers->get('Cache-Control'));
 
@@ -77,6 +78,79 @@ class PublicStatusApiTest extends TestCase
         $this->assertSame('2026-07-12', $history[89]['date']);
         $this->assertSame('operational', $history[89]['status']);
         $this->assertEquals(100.0, $history[89]['uptime_percent']);
+
+        $this->travelBack();
+    }
+
+    public function test_public_history_exposes_clipped_status_periods_with_duration(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-07-15 09:00:00 UTC'));
+        $page = StatusPage::query()->create([
+            'name' => 'Status',
+            'slug' => 'main',
+            'timezone' => 'Asia/Shanghai',
+            'is_public' => true,
+        ]);
+        $group = ComponentGroup::query()->create([
+            'status_page_id' => $page->id,
+            'name' => 'API',
+            'slug' => 'api',
+        ]);
+        $component = Component::query()->create([
+            'component_group_id' => $group->id,
+            'name' => 'Game',
+            'slug' => 'game',
+            'status' => 'major_outage',
+        ]);
+        DailyRollup::query()->create([
+            'component_id' => $component->id,
+            'date' => '2026-07-15',
+            'uptime_percentage' => 11.7647,
+            'observed_seconds' => 61200,
+            'available_seconds' => 7200,
+            'worst_status' => 'major_outage',
+        ]);
+        StatusInterval::query()->create([
+            'component_id' => $component->id,
+            'status' => 'degraded',
+            'started_at' => CarbonImmutable::parse('2026-07-14 18:00:00 UTC'),
+            'ended_at' => CarbonImmutable::parse('2026-07-14 20:30:00 UTC'),
+        ]);
+        StatusInterval::query()->create([
+            'component_id' => $component->id,
+            'status' => 'major_outage',
+            'started_at' => CarbonImmutable::parse('2026-07-14 20:30:00 UTC'),
+            'ended_at' => null,
+        ]);
+
+        foreach (['/api/public/v1/status', '/api/public/v1/history?from=2026-07-15&to=2026-07-15'] as $url) {
+            $response = $this->getJson($url)->assertOk();
+            $componentPeriod = $response->json('groups.0.components.0.daily_history.0.status_periods.0');
+            if (str_contains($url, '/status')) {
+                $componentPeriod = $response->json('groups.0.components.0.daily_history.89.status_periods.0');
+            }
+
+            $this->assertSame('degraded', $componentPeriod['status']);
+            $this->assertSame('2026-07-14T18:00:00+00:00', $componentPeriod['started_at']);
+            $this->assertSame('2026-07-14T20:30:00+00:00', $componentPeriod['ended_at']);
+            $this->assertSame(9000, $componentPeriod['duration_seconds']);
+            $this->assertFalse($componentPeriod['ongoing']);
+
+            $componentPath = str_contains($url, '/status')
+                ? 'groups.0.components.0.daily_history.89.status_periods.1'
+                : 'groups.0.components.0.daily_history.0.status_periods.1';
+            $ongoingPeriod = $response->json($componentPath);
+            $this->assertSame('major_outage', $ongoingPeriod['status']);
+            $this->assertSame('2026-07-14T20:30:00+00:00', $ongoingPeriod['started_at']);
+            $this->assertNull($ongoingPeriod['ended_at']);
+            $this->assertSame(45000, $ongoingPeriod['duration_seconds']);
+            $this->assertTrue($ongoingPeriod['ongoing']);
+
+            $groupPath = str_contains($url, '/status')
+                ? 'groups.0.daily_history.89.status_periods.0.component_name'
+                : 'groups.0.daily_history.0.status_periods.0.component_name';
+            $this->assertSame('Game', $response->json($groupPath));
+        }
 
         $this->travelBack();
     }

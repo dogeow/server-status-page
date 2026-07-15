@@ -433,7 +433,7 @@ textarea:focus-visible {
   gap: 3px;
   width: max-content;
   min-width: 142px;
-  max-width: 230px;
+  max-width: 320px;
   padding: 9px 11px;
   color: #fff;
   text-align: left;
@@ -453,6 +453,24 @@ textarea:focus-visible {
 }
 
 .history-tooltip span { color: #d7dade; }
+
+.history-tooltip-summary { white-space: nowrap; }
+
+.history-tooltip-periods {
+  display: grid;
+  gap: 5px;
+  margin-top: 3px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.history-tooltip-period {
+  display: grid;
+  gap: 1px;
+}
+
+.history-tooltip-period strong,
+.history-tooltip-period span { white-space: nowrap; }
 
 .history-tooltip::after {
   position: absolute;
@@ -743,6 +761,7 @@ textarea:focus-visible {
     margin-top: 16px;
   }
   .history-bar { height: 20px; border-radius: 1px; }
+  .history-tooltip { max-width: min(280px, calc(100vw - 48px)); }
   .history-bar:nth-child(-n + 25) .history-tooltip {
     right: auto;
     left: 0;

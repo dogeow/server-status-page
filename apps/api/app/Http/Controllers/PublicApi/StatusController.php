@@ -17,16 +17,24 @@ class StatusController extends Controller
     public function status(Request $request): JsonResponse
     {
         $page = $this->page($request->query('page'));
-        $from = CarbonImmutable::today($page->timezone ?: 'UTC')->subDays(89);
+        $timezone = $page->timezone ?: 'UTC';
+        $from = CarbonImmutable::today($timezone)->subDays(89);
+        $now = CarbonImmutable::now('UTC');
         $page->load([
-            'groups.components' => fn ($query) => $query->where('is_hidden', false)->with(['rollups' => fn ($rollups) => $rollups->where('date', '>=', $from->toDateString())->orderBy('date')]),
+            'groups.components' => fn ($query) => $query->where('is_hidden', false)->with([
+                'rollups' => fn ($rollups) => $rollups->where('date', '>=', $from->toDateString())->orderBy('date'),
+                'intervals' => fn ($intervals) => $intervals
+                    ->where('started_at', '<', $now)
+                    ->where(fn ($nested) => $nested->whereNull('ended_at')->orWhere('ended_at', '>', $from->utc()))
+                    ->orderBy('started_at'),
+            ]),
             'incidents' => fn ($query) => $query->where('is_public', true)->whereNull('resolved_at')->with(['updates', 'components:id,name,slug'])->latest('started_at'),
             'maintenanceWindows' => fn ($query) => $query->where('ends_at', '>=', now())->whereNotIn('status', ['cancelled', 'completed'])->with('components:id,name,slug')->orderBy('starts_at'),
         ]);
 
-        $groups = $page->groups->map(function ($group) use ($from) {
-            $components = $group->components->map(fn (Component $component) => $this->componentPayload($component, $from));
-            $dailyHistory = collect(range(0, 89))->map(function (int $offset) use ($group, $from) {
+        $groups = $page->groups->map(function ($group) use ($from, $now, $timezone) {
+            $components = $group->components->map(fn (Component $component) => $this->componentPayload($component, $from, $timezone, $now));
+            $dailyHistory = collect(range(0, 89))->map(function (int $offset) use ($group, $from, $now, $timezone) {
                 $date = $from->addDays($offset)->toDateString();
                 $rollups = $group->components->map(fn (Component $component) => $component->rollups->first(fn ($rollup) => $rollup->date->toDateString() === $date));
                 $present = $rollups->filter();
@@ -38,6 +46,7 @@ class StatusController extends Controller
                     'uptime_percent' => $this->rollupUptime($present),
                     'latency_ms' => $latencies->isEmpty() ? null : (int) round($latencies->avg()),
                     'maintenance' => $present->contains(fn ($rollup) => $rollup->maintenance_seconds > 0),
+                    'status_periods' => $this->groupStatusPeriods($group->components, $date, $timezone, $now),
                 ];
             });
 
@@ -106,9 +115,16 @@ class StatusController extends Controller
         $dates = collect(range(0, (int) $from->diffInDays($to)))
             ->map(fn (int $offset) => $from->addDays($offset)->toDateString());
 
-        $page->load(['groups.components' => fn ($query) => $query->where('is_hidden', false)->with(['rollups' => fn ($rollups) => $rollups->whereBetween('date', [$from->toDateString(), $to->toDateString()])->orderBy('date')])]);
         $fromInstant = $from->utc();
         $toExclusive = $to->addDay()->utc();
+        $now = CarbonImmutable::now('UTC');
+        $page->load(['groups.components' => fn ($query) => $query->where('is_hidden', false)->with([
+            'rollups' => fn ($rollups) => $rollups->whereBetween('date', [$from->toDateString(), $to->toDateString()])->orderBy('date'),
+            'intervals' => fn ($intervals) => $intervals
+                ->where('started_at', '<', $toExclusive)
+                ->where(fn ($nested) => $nested->whereNull('ended_at')->orWhere('ended_at', '>', $fromInstant))
+                ->orderBy('started_at'),
+        ])]);
         $incidents = $page->incidents()
             ->where('is_public', true)
             ->where('started_at', '<', $toExclusive)
@@ -117,13 +133,15 @@ class StatusController extends Controller
             ->latest('started_at')
             ->get();
 
-        $groups = $page->groups->map(function ($group) use ($dates) {
-            $components = $group->components->map(function (Component $component) use ($dates) {
+        $groups = $page->groups->map(function ($group) use ($dates, $now, $timezone) {
+            $components = $group->components->map(function (Component $component) use ($dates, $now, $timezone) {
                 $rollups = $component->rollups->keyBy(fn ($rollup) => $rollup->date->toDateString());
-                $dailyHistory = $dates->map(function (string $date) use ($rollups): array {
+                $dailyHistory = $dates->map(function (string $date) use ($component, $rollups, $now, $timezone): array {
                     $rollup = $rollups->get($date);
+                    $payload = $rollup ? $this->rollupPayload($rollup) : $this->emptyRollupPayload($date);
+                    $payload['status_periods'] = $this->componentStatusPeriods($component, $date, $timezone, $now);
 
-                    return $rollup ? $this->rollupPayload($rollup) : $this->emptyRollupPayload($date);
+                    return $payload;
                 });
                 $latencies = $component->rollups->pluck('average_latency_ms')->filter(fn ($value) => $value !== null);
 
@@ -138,7 +156,7 @@ class StatusController extends Controller
                     'daily_history' => $dailyHistory,
                 ];
             });
-            $dailyHistory = $dates->map(function (string $date) use ($group): array {
+            $dailyHistory = $dates->map(function (string $date) use ($group, $now, $timezone): array {
                 $rollups = $group->components->map(fn (Component $component) => $component->rollups->first(fn ($rollup) => $rollup->date->toDateString() === $date));
                 $present = $rollups->filter();
                 $latencies = $present->pluck('average_latency_ms')->filter(fn ($value) => $value !== null);
@@ -149,6 +167,7 @@ class StatusController extends Controller
                     'uptime_percent' => $this->rollupUptime($present),
                     'latency_ms' => $latencies->isEmpty() ? null : (int) round($latencies->avg()),
                     'maintenance' => $present->contains(fn ($rollup) => $rollup->maintenance_seconds > 0),
+                    'status_periods' => $this->groupStatusPeriods($group->components, $date, $timezone, $now),
                 ];
             });
             $latencies = $components->pluck('latency_ms')->filter(fn ($value) => $value !== null);
@@ -203,20 +222,16 @@ class StatusController extends Controller
             ->header('Cache-Control', $item->resolved_at ? 'public, max-age=300' : 'public, max-age=15, stale-if-error=86400');
     }
 
-    private function componentPayload(Component $component, CarbonImmutable $from): array
+    private function componentPayload(Component $component, CarbonImmutable $from, string $timezone, CarbonImmutable $now): array
     {
         $rollups = $component->rollups->keyBy(fn ($rollup) => $rollup->date->toDateString());
-        $history = collect(range(0, 89))->map(function (int $offset) use ($rollups, $from) {
+        $history = collect(range(0, 89))->map(function (int $offset) use ($component, $rollups, $from, $now, $timezone) {
             $date = $from->addDays($offset)->toDateString();
             $rollup = $rollups->get($date);
+            $payload = $rollup ? $this->rollupPayload($rollup) : $this->emptyRollupPayload($date);
+            $payload['status_periods'] = $this->componentStatusPeriods($component, $date, $timezone, $now);
 
-            return $rollup ? $this->rollupPayload($rollup) : [
-                'date' => $date,
-                'status' => ComponentStatus::Unknown->value,
-                'uptime_percent' => null,
-                'latency_ms' => null,
-                'maintenance' => false,
-            ];
+            return $payload;
         });
         $uptime = $this->rollupUptime($component->rollups);
         $monitorIds = $component->monitors()->pluck('id');
@@ -254,6 +269,58 @@ class StatusController extends Controller
             'latency_ms' => null,
             'maintenance' => false,
         ];
+    }
+
+    private function componentStatusPeriods(Component $component, string $date, string $timezone, CarbonImmutable $now, bool $includeComponentName = false): array
+    {
+        $localDay = CarbonImmutable::parse($date, $timezone)->startOfDay();
+        $dayStart = $localDay->utc();
+        $dayEnd = $localDay->addDay()->utc();
+        $periodEnd = $dayEnd->lessThan($now) ? $dayEnd : $now;
+
+        if (! $dayStart->lessThan($periodEnd)) {
+            return [];
+        }
+
+        return $component->intervals
+            ->filter(fn ($interval) => $interval->status !== ComponentStatus::Operational->value
+                && $interval->started_at->lessThan($periodEnd)
+                && ($interval->ended_at === null || $interval->ended_at->greaterThan($dayStart)))
+            ->map(function ($interval) use ($component, $dayStart, $dayEnd, $periodEnd, $now, $includeComponentName): ?array {
+                $startedAt = CarbonImmutable::instance($interval->started_at->greaterThan($dayStart) ? $interval->started_at : $dayStart);
+                $intervalEnd = $interval->ended_at ? CarbonImmutable::instance($interval->ended_at) : $periodEnd;
+                $endedAt = $intervalEnd->lessThan($periodEnd) ? $intervalEnd : $periodEnd;
+
+                if (! $startedAt->lessThan($endedAt)) {
+                    return null;
+                }
+
+                $ongoing = $interval->ended_at === null && $dayEnd->greaterThan($now);
+                $payload = [
+                    'status' => $interval->status,
+                    'started_at' => $startedAt->toIso8601String(),
+                    'ended_at' => $ongoing ? null : $endedAt->toIso8601String(),
+                    'duration_seconds' => (int) $startedAt->diffInSeconds($endedAt),
+                    'ongoing' => $ongoing,
+                ];
+                if ($includeComponentName) {
+                    $payload['component_name'] = $component->name;
+                }
+
+                return $payload;
+            })
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    private function groupStatusPeriods($components, string $date, string $timezone, CarbonImmutable $now): array
+    {
+        return $components
+            ->flatMap(fn (Component $component) => $this->componentStatusPeriods($component, $date, $timezone, $now, true))
+            ->sortBy('started_at')
+            ->values()
+            ->all();
     }
 
     private function incidentPayload(Incident $incident): array

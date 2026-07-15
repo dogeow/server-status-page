@@ -6,11 +6,21 @@ export type ServiceStatus =
   | "maintenance"
   | "unknown";
 
+export type DailyStatusPeriod = {
+  status: ServiceStatus;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number;
+  ongoing: boolean;
+  componentName?: string | null;
+};
+
 export type DailyStatus = {
   date: string;
   status: ServiceStatus;
   uptimePercent?: number | null;
   maintenance?: boolean;
+  statusPeriods?: DailyStatusPeriod[];
 };
 
 export type StatusComponent = {

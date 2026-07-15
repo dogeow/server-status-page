@@ -62,6 +62,10 @@ test("exposes a dynamic nonce readiness route instead of a cacheable homepage ch
 test("history bars expose click, hover and keyboard-accessible date details", async () => {
   const source = await readFile(new URL("../app/components/StatusDashboard.tsx", import.meta.url), "utf8");
   assert.match(source, /className="history-tooltip" role="tooltip"/);
+  assert.match(source, /statusPeriods: normalizeHistoryPeriods/);
+  assert.match(source, /formatStatusPeriod\(period, day\.date, timezone\)/);
+  assert.match(source, /持续 \{formatDuration\(period\.durationSeconds\)\}/);
+  assert.match(source, /period\.ongoing \|\| !period\.endedAt/);
   assert.match(source, /onClick=\{\(\) => setSelectedIndex/);
   assert.match(source, /onMouseEnter=\{\(\) => setPreviewIndex/);
   assert.match(source, /onFocus=\{\(\) => setPreviewIndex/);

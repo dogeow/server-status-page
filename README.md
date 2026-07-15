@@ -167,7 +167,7 @@ docker compose exec api php artisan status:ensure-partitions
 
 ## API 概览
 
-- Public：`GET /api/public/v1/status`、`GET /api/public/v1/history` 和事件详情；首页直接展示并切换历史周期。
+- Public：`GET /api/public/v1/status`、`GET /api/public/v1/history` 和事件详情；首页直接展示并切换历史周期。每日历史的 `status_periods` 会按状态页时区裁剪异常区间，提供状态、起止时间、持续秒数、是否仍在进行以及分组视图中的组件名称。
 - Admin：`/api/admin/v1/*`，使用 Sanctum 同源 session，Owner/Admin/Viewer 服务端鉴权。
 - Agent：enroll、ETag plan、heartbeat 与 results batch；每次请求使用 timestamp + nonce + raw-body SHA256 的 HMAC。
 - Laravel Probe：使用独立 `STATUS-PROBE-HMAC-SHA256-V1` canonical、current/next secret 和 replay nonce。

@@ -38,6 +38,26 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
+function normalizeStatusPeriods(value: unknown): DailyStatus["statusPeriods"] {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((item) => {
+    const row = (item ?? {}) as Record<string, unknown>;
+    const duration = Number(row.duration_seconds ?? row.durationSeconds ?? 0);
+
+    return {
+      status: normalizeStatus(row.status),
+      startedAt: String(row.started_at ?? row.startedAt ?? ""),
+      endedAt: row.ended_at || row.endedAt ? String(row.ended_at ?? row.endedAt) : null,
+      durationSeconds: Number.isFinite(duration) ? Math.max(0, duration) : 0,
+      ongoing: Boolean(row.ongoing),
+      componentName: row.component_name || row.componentName
+        ? String(row.component_name ?? row.componentName)
+        : null,
+    };
+  }).filter((period) => period.startedAt !== "");
+}
+
 function normalizeDaily(value: unknown): DailyStatus[] {
   if (!Array.isArray(value)) return [];
   return value.slice(-90).map((item, index) => {
@@ -47,6 +67,7 @@ function normalizeDaily(value: unknown): DailyStatus[] {
       status: normalizeStatus(row.status),
       uptimePercent: numberOrNull(row.uptime_percent ?? row.uptimePercent),
       maintenance: Boolean(row.maintenance),
+      statusPeriods: normalizeStatusPeriods(row.status_periods ?? row.statusPeriods),
     };
   });
 }
