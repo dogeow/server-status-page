@@ -96,6 +96,22 @@ class StateMachineTest extends TestCase
         $this->assertDatabaseCount('incidents', 0);
     }
 
+    public function test_inconclusive_squid_control_check_preserves_known_availability(): void
+    {
+        [$agent, $monitor, $component] = $this->fixture();
+        $monitor->update(['type' => 'squid', 'status' => ComponentStatus::Operational->value]);
+        $component->update(['status' => ComponentStatus::Operational->value]);
+
+        $this->submitResult($agent, $monitor, 'unknown', 0, 500, 'canary_control_failed')->assertAccepted();
+
+        $monitor->refresh();
+        $this->assertSame(ComponentStatus::Operational->value, $monitor->status);
+        $this->assertSame('canary_control_failed', $monitor->last_error_code);
+        $this->assertSame(ComponentStatus::Operational->value, $component->fresh()->status);
+        $this->assertDatabaseCount('status_intervals', 0);
+        $this->assertDatabaseMissing('outbox_events', ['type' => 'component.status_changed']);
+    }
+
     public function test_slow_degradation_requires_two_fast_successes_to_recover(): void
     {
         [$agent, $monitor, $component] = $this->fixture();
@@ -184,8 +200,7 @@ class StateMachineTest extends TestCase
         int $latencyMs = 100,
         ?string $errorCode = null,
         array $metrics = [],
-    )
-    {
+    ) {
         $payload = $this->payload($monitor, $status, now()->startOfSecond()->addSeconds($offset)->toIso8601String());
         $payload['results'][0]['latency_ms'] = $latencyMs;
         $payload['results'][0]['error_code'] = $errorCode ?? ($status === 'ok' ? null : $status);

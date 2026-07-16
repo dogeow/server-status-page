@@ -33,9 +33,15 @@ class StateEvaluator
         $isSuccess = $isCertificateExpiryWarning || in_array($status, ['ok', 'success', 'operational', 'pass'], true);
         $isConfigurationError = in_array($status, ['config_error', 'auth_error'], true);
         $isUnknown = $status === 'unknown';
+        $isInconclusiveCanaryControl = $isUnknown && $result->error_code === 'canary_control_failed';
         $isSlow = ! $isCertificateExpiryWarning && $isSuccess && $monitor->slow_threshold_ms && $result->latency_ms > $monitor->slow_threshold_ms;
 
-        if ($isUnknown) {
+        if ($isInconclusiveCanaryControl) {
+            $monitor->consecutive_failures = 0;
+            $monitor->consecutive_successes = 0;
+            $monitor->consecutive_slow = 0;
+            $monitor->last_error_code = $result->error_code;
+        } elseif ($isUnknown) {
             $monitor->status = ComponentStatus::Unknown->value;
             $monitor->consecutive_failures = 0;
             $monitor->consecutive_successes = 0;
