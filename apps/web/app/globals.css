@@ -469,6 +469,12 @@ textarea:focus-visible {
   gap: 1px;
 }
 
+.history-tooltip-period + .history-tooltip-period {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
 .history-tooltip-period strong,
 .history-tooltip-period span { white-space: nowrap; }
 

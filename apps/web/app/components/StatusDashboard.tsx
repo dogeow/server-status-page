@@ -116,6 +116,10 @@ function formatDuration(seconds: number) {
   return `${Math.max(0, Math.floor(seconds))}秒`;
 }
 
+function isGenericRecoveryMessage(message: string | null | undefined) {
+  return message?.trim().replace(/[。.!！]+$/u, "") === "监控确认服务已经恢复";
+}
+
 function StatusIcon({ status, small = false }: { status: ServiceStatus; small?: boolean }) {
   const copy = statusCopy[status];
   return (
@@ -176,7 +180,9 @@ function HistoryBars({ history, label, anchor, timezone }: { history: DailyStatu
                         <strong>{period.componentName ? `${period.componentName} · ` : ""}{statusCopy[period.status].label}</strong>
                         <span>{formatStatusPeriod(period, day.date, timezone)} · 持续 {formatDuration(period.durationSeconds)}</span>
                         {period.incidentTitle ? <span className="history-tooltip-incident">事件：{period.incidentTitle}</span> : null}
-                        {period.incidentMessage ? <span className="history-tooltip-message">{period.incidentMessage}</span> : null}
+                        {period.incidentMessage && !isGenericRecoveryMessage(period.incidentMessage)
+                          ? <span className="history-tooltip-message">{period.incidentMessage}</span>
+                          : null}
                       </span>
                     ))}
                   </span>

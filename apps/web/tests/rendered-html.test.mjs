@@ -65,11 +65,15 @@ test("history bars expose click, hover and keyboard-accessible date details", as
   assert.match(source, /statusPeriods: normalizeHistoryPeriods/);
   assert.match(source, /formatStatusPeriod\(period, day\.date, timezone\)/);
   assert.match(source, /持续 \{formatDuration\(period\.durationSeconds\)\}/);
+  assert.match(source, /isGenericRecoveryMessage\(period\.incidentMessage\)/);
   assert.match(source, /period\.ongoing \|\| !period\.endedAt/);
   assert.match(source, /onClick=\{\(\) => setSelectedIndex/);
   assert.match(source, /onMouseEnter=\{\(\) => setPreviewIndex/);
   assert.match(source, /onFocus=\{\(\) => setPreviewIndex/);
   assert.match(source, /aria-label=\{detailLabel\}/);
+
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.history-tooltip-period \+ \.history-tooltip-period\s*\{[^}]*border-top:/);
 });
 
 test("mobile status layout keeps the hero compact and all 90 bars inside the card", async () => {
