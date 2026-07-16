@@ -2,6 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\Component;
+use App\Models\ComponentGroup;
+use App\Models\Monitor;
+use App\Models\OutboxEvent;
 use App\Models\StatusPage;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -41,6 +45,37 @@ class AdminApiTest extends TestCase
             'type' => 'http',
             'interval_seconds' => 5,
         ])->assertUnprocessable()->assertJsonValidationErrors(['component_id', 'interval_seconds']);
+    }
+
+    public function test_overview_recent_events_include_names_and_explanatory_fields(): void
+    {
+        Sanctum::actingAs(User::factory()->create(['role' => 'viewer']));
+        $page = StatusPage::query()->create(['name' => 'Status', 'slug' => 'main']);
+        $group = ComponentGroup::query()->create(['status_page_id' => $page->id, 'name' => 'API', 'slug' => 'api']);
+        $component = Component::query()->create(['component_group_id' => $group->id, 'name' => 'Public API', 'slug' => 'public-api']);
+        $monitor = Monitor::query()->create(['component_id' => $component->id, 'name' => 'API TLS', 'type' => 'tls']);
+
+        OutboxEvent::query()->create([
+            'type' => 'component.status_changed',
+            'aggregate_type' => 'component',
+            'aggregate_id' => (string) $component->id,
+            'payload' => ['component_id' => $component->id, 'from' => 'operational', 'to' => 'major_outage'],
+            'available_at' => now(),
+        ]);
+        OutboxEvent::query()->create([
+            'type' => 'monitor.tls_certificate_expiring',
+            'aggregate_type' => 'monitor',
+            'aggregate_id' => (string) $monitor->id,
+            'payload' => ['monitor_id' => $monitor->id, 'error_code' => 'tls_certificate_expiring', 'expires_at' => now()->addDays(10)->toIso8601String()],
+            'available_at' => now(),
+        ]);
+
+        $events = collect($this->getJson('/api/admin/v1/overview')->assertOk()->json('recent_events'))->keyBy('event');
+        $this->assertSame('Public API', $events->get('component.status_changed')['target_name']);
+        $this->assertSame('operational', $events->get('component.status_changed')['from_status']);
+        $this->assertSame('major_outage', $events->get('component.status_changed')['to_status']);
+        $this->assertSame('API TLS', $events->get('monitor.tls_certificate_expiring')['target_name']);
+        $this->assertNotNull($events->get('monitor.tls_certificate_expiring')['expires_at']);
     }
 
     public function test_external_probe_url_uses_app_url_and_secrets_are_only_returned_once(): void

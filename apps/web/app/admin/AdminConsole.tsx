@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { ThemeToggle } from "../components/ThemeToggle";
 
 type Section =
   | "overview"
@@ -203,6 +204,66 @@ function formatAdminDate(value: unknown) {
   }).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "00";
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
+}
+
+function eventTypeLabel(value: unknown) {
+  const event = String(value ?? "");
+  const labels: Record<string, string> = {
+    "component.status_changed": "组件状态变化",
+    "monitor.tls_certificate_expiring": "TLS 证书即将到期",
+    "monitor.configuration_error": "监控配置异常",
+    "agent.offline": "Agent 已离线",
+    "incident.created": "服务事件已创建",
+    "incident.updated": "服务事件已更新",
+    "incident.resolved": "服务事件已恢复",
+    "incident.reminder": "服务事件提醒",
+    "maintenance.scheduled": "维护窗口已计划",
+    "maintenance.updated": "维护窗口已更新",
+  };
+  return labels[event] ?? "系统事件";
+}
+
+function eventErrorLabel(value: unknown) {
+  const error = String(value ?? "");
+  const labels: Record<string, string> = {
+    tls_certificate_expiring: "证书有效期即将结束",
+    authentication_failed: "认证失败",
+    configuration_error: "配置错误",
+  };
+  return labels[error] ?? (error ? `错误代码：${error}` : "需要检查配置");
+}
+
+function eventDetail(row: Resource) {
+  const event = String(row.event ?? "");
+  const target = String(row.target_name ?? "相关服务");
+  if (event === "component.status_changed") {
+    return `${target}：${statusLabel(row.from_status)} → ${statusLabel(row.to_status)}`;
+  }
+  if (event === "monitor.tls_certificate_expiring") {
+    return row.expires_at ? `${target}：证书将在 ${formatAdminDate(row.expires_at)} 到期` : `${target}：证书有效期即将结束`;
+  }
+  if (event === "monitor.configuration_error") return `${target}：${eventErrorLabel(row.error_code)}`;
+  if (event === "agent.offline") {
+    return row.last_seen_at ? `${target}：最后在线于 ${formatAdminDate(row.last_seen_at)}` : `${target}：暂时无法连接`;
+  }
+  if (event.startsWith("incident.")) return `${target} · ${statusLabel(row.status ?? row.severity)}`;
+  if (event.startsWith("maintenance.")) {
+    return row.starts_at && row.ends_at
+      ? `${target}：${formatAdminDate(row.starts_at)} 至 ${formatAdminDate(row.ends_at)}`
+      : target;
+  }
+  return row.target_name ? target : `内部类型：${event || "未知"}`;
+}
+
+function eventStatus(row: Resource) {
+  const event = String(row.event ?? "");
+  if (event === "component.status_changed") return row.to_status;
+  if (event === "monitor.tls_certificate_expiring" || event === "monitor.configuration_error") return "warning";
+  if (event === "agent.offline") return "offline";
+  if (event === "incident.resolved") return "resolved";
+  if (event.startsWith("incident.")) return row.severity ?? row.status;
+  if (event.startsWith("maintenance.")) return "under_maintenance";
+  return row.status;
 }
 
 function auditValue(value: unknown) {
@@ -753,6 +814,7 @@ export function AdminConsole() {
         <header className="admin-topbar">
           <div><h1>{title[section]}</h1><p>真实探针、事件和通知的统一控制面</p></div>
           <div className="admin-actions">
+            <ThemeToggle />
             <button className="secondary-button" type="button" onClick={() => void load()}>刷新</button>
             {canCreate ? <button className="primary-button" type="button" onClick={() => setDrawer(true)}>新建</button> : null}
           </div>
@@ -777,7 +839,7 @@ export function AdminConsole() {
             <article className="admin-card">
               <header className="admin-card-head"><h2>系统动态</h2></header>
               <div className="admin-card-body">
-                {Array.isArray(overview.recent_events) && overview.recent_events.length ? <ul className="event-list">{(overview.recent_events as Resource[]).map((event, index) => <li key={String(event.id ?? index)}><i /><div><strong>{resourceLabel(event)}</strong><p>{event.message ? `${String(event.message)} · ` : ""}<time dateTime={String(event.created_at ?? "")}>{formatAdminDate(event.created_at)}</time></p></div></li>)}</ul> : <div className="admin-empty">暂无最新事件</div>}
+                {Array.isArray(overview.recent_events) && overview.recent_events.length ? <ul className="event-list">{(overview.recent_events as Resource[]).map((event, index) => <li key={String(event.id ?? index)}><i className={`mini-status status-${statusClass(eventStatus(event))}`} /><div><strong>{eventTypeLabel(event.event)}</strong><p>{eventDetail(event)}</p><time dateTime={String(event.created_at ?? "")}>{formatAdminDate(event.created_at)}</time></div></li>)}</ul> : <div className="admin-empty">暂无最新事件</div>}
               </div>
             </article>
           </div>

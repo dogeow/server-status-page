@@ -276,6 +276,12 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
     () => getHistoryPeriod(initialStatus.updatedAt, periodOffset),
     [initialStatus.updatedAt, periodOffset],
   );
+  const previousPeriod = useMemo(
+    () => getHistoryPeriod(initialStatus.updatedAt, periodOffset - 1),
+    [initialStatus.updatedAt, periodOffset],
+  );
+  const canGoPrevious = initialStatus.historyAvailableFrom !== null
+    && previousPeriod.to >= initialStatus.historyAvailableFrom;
 
   async function changePeriod(nextOffset: number) {
     setPeriodOffset(nextOffset);
@@ -434,7 +440,12 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         <div className="status-card-header">
           <h2 id="system-status-title">System status</h2>
           <div className="period-control" aria-label="历史周期">
-            <button type="button" onClick={() => void changePeriod(periodOffset - 1)} aria-label="上一周期">‹</button>
+            <button
+              type="button"
+              onClick={() => void changePeriod(periodOffset - 1)}
+              disabled={!canGoPrevious || historyLoading}
+              aria-label="上一周期"
+            >‹</button>
             <span>{period.label}</span>
             <button type="button" onClick={() => void changePeriod(Math.min(0, periodOffset + 1))} disabled={periodOffset >= 0} aria-label="下一周期">›</button>
             {historyLoading ? <span className="history-loading" aria-live="polite">读取中</span> : null}

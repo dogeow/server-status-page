@@ -164,6 +164,7 @@ function unavailablePayload(): PublicStatusPayload {
     },
     overallStatus: "unknown",
     updatedAt: new Date().toISOString(),
+    historyAvailableFrom: null,
     groups: [],
     incidents: [],
     maintenances: [],
@@ -196,6 +197,9 @@ export async function getPublicStatus(): Promise<PublicStatusPayload> {
       updatedAt: String(
         raw.updated_at ?? raw.updatedAt ?? raw.generated_at ?? raw.generatedAt ?? new Date().toISOString(),
       ),
+      historyAvailableFrom: raw.history_available_from || raw.historyAvailableFrom
+        ? String(raw.history_available_from ?? raw.historyAvailableFrom)
+        : null,
       groups: Array.isArray(raw.groups) ? raw.groups.map(normalizeGroup) : [],
       incidents: Array.isArray(raw.incidents)
         ? raw.incidents.map(normalizeIncident)

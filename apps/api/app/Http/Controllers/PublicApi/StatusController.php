@@ -6,6 +6,7 @@ use App\Enums\ComponentStatus;
 use App\Http\Controllers\Controller;
 use App\Models\CheckResult;
 use App\Models\Component;
+use App\Models\DailyRollup;
 use App\Models\Incident;
 use App\Models\StatusPage;
 use Carbon\CarbonImmutable;
@@ -80,6 +81,7 @@ class StatusController extends Controller
             ],
             'overall_status' => $this->worstStatus($groups->pluck('status')->all()),
             'generated_at' => now()->toIso8601String(),
+            'history_available_from' => $this->historyAvailableFrom($page),
             'groups' => $groups,
             'incidents' => $page->incidents->map(fn (Incident $incident) => $this->incidentPayload($incident)),
             'maintenances' => $page->maintenanceWindows->map(fn ($window) => [
@@ -205,6 +207,7 @@ class StatusController extends Controller
             'to' => $to->toDateString(),
             'overall_status' => $this->worstStatus($groups->pluck('status')->all()),
             'generated_at' => now()->toIso8601String(),
+            'history_available_from' => $this->historyAvailableFrom($page),
             'groups' => $groups,
             'components' => $groups->flatMap(fn (array $group) => $group['components'])->values(),
             'incidents' => $incidents->map(fn (Incident $incident) => $this->incidentPayload($incident)),
@@ -261,6 +264,18 @@ class StatusController extends Controller
             'latency_ms' => $latency,
             'daily_history' => $history,
         ];
+    }
+
+    private function historyAvailableFrom(StatusPage $page): ?string
+    {
+        $date = DailyRollup::query()
+            ->where('observed_seconds', '>', 0)
+            ->whereHas('component', fn ($component) => $component
+                ->where('is_hidden', false)
+                ->whereHas('group', fn ($group) => $group->where('status_page_id', $page->id)))
+            ->min('date');
+
+        return $date === null ? null : (string) $date;
     }
 
     private function rollupPayload($rollup): array

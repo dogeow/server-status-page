@@ -26,6 +26,7 @@ class PublicStatusApiTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('status_page.slug', 'main')
             ->assertJsonPath('overall_status', 'operational')
+            ->assertJsonPath('history_available_from', fn ($date) => is_string($date) && $date !== '')
             ->assertJsonCount(3, 'groups')
             ->assertJsonCount(90, 'groups.0.daily_history')
             ->assertJsonCount(90, 'groups.0.components.0.daily_history')
@@ -72,6 +73,7 @@ class PublicStatusApiTest extends TestCase
         $response = $this->getJson('/api/public/v1/status')->assertOk();
         $history = $response->json('groups.0.components.0.daily_history');
 
+        $this->assertSame('2026-07-12', $response->json('history_available_from'));
         $this->assertCount(90, $history);
         $this->assertSame('2026-04-14', $history[0]['date']);
         $this->assertSame('unknown', $history[0]['status']);
@@ -248,7 +250,7 @@ class PublicStatusApiTest extends TestCase
             ->assertJsonCount(31, 'groups.0.daily_history')
             ->assertJsonCount(31, 'groups.0.components.0.daily_history')
             ->assertJsonStructure([
-                'status_page', 'from', 'to', 'overall_status', 'generated_at',
+                'status_page', 'from', 'to', 'overall_status', 'generated_at', 'history_available_from',
                 'groups' => [[
                     'id', 'name', 'slug', 'status', 'component_count', 'uptime_percent', 'latency_ms', 'daily_history',
                     'components' => [['id', 'name', 'slug', 'status', 'uptime_percent', 'latency_ms', 'daily_history']],

@@ -82,6 +82,7 @@ export type PublicStatusPayload = {
   };
   overallStatus: ServiceStatus;
   updatedAt: string;
+  historyAvailableFrom: string | null;
   groups: StatusGroup[];
   incidents: Incident[];
   maintenances: Maintenance[];

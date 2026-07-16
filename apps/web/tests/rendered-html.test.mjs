@@ -74,6 +74,20 @@ test("history bars expose click, hover and keyboard-accessible date details", as
 
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /\.history-tooltip-period \+ \.history-tooltip-period\s*\{[^}]*border-top:/);
+  assert.match(css, /\.status-card\s*\{[^}]*overflow: visible/);
+
+  const tablet = css.slice(css.indexOf("@media (max-width: 900px)"));
+  assert.match(tablet, /\.group-row\s*\{[^}]*overflow: visible/);
+  assert.match(tablet, /\.groups-list\s*\{[^}]*overflow: visible/);
+});
+
+test("period navigation disables the previous button when no earlier observations exist", async () => {
+  const source = await readFile(new URL("../app/components/StatusDashboard.tsx", import.meta.url), "utf8");
+  const api = await readFile(new URL("../app/lib/api.ts", import.meta.url), "utf8");
+
+  assert.match(source, /previousPeriod\.to >= initialStatus\.historyAvailableFrom/);
+  assert.match(source, /disabled=\{!canGoPrevious \|\| historyLoading\}/);
+  assert.match(api, /historyAvailableFrom: raw\.history_available_from/);
 });
 
 test("mobile status layout keeps the hero compact and all 90 bars inside the card", async () => {
@@ -134,7 +148,31 @@ test("admin explains self-hosted Laravel integrations and formats event times", 
   assert.match(source, /查看 Laravel 应用接入文档/);
   assert.match(source, /系统不开放注册。当前自用只需保留 Owner/);
   assert.match(source, /formatAdminDate\(event\.created_at\)/);
+  assert.match(source, /"component\.status_changed": "组件状态变化"/);
+  assert.match(source, /"monitor\.tls_certificate_expiring": "TLS 证书即将到期"/);
+  assert.match(source, /statusLabel\(row\.from_status\).*statusLabel\(row\.to_status\)/);
+  assert.match(source, /eventDetail\(event\)/);
   assert.match(source, /所有者（Owner）/);
+});
+
+test("public and admin pages share a persisted light and dark theme", async () => {
+  const [layout, toggle, header, admin, login, css] = await Promise.all([
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/ThemeToggle.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/SiteHeader.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/AdminConsole.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/login/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(layout, /server-status-theme/);
+  assert.match(layout, /prefers-color-scheme: dark/);
+  assert.match(toggle, /localStorage\.setItem\(STORAGE_KEY, theme\)/);
+  assert.match(header, /<ThemeToggle \/>/);
+  assert.match(admin, /<ThemeToggle \/>/);
+  assert.match(login, /<ThemeToggle \/>/);
+  assert.match(css, /:root\[data-theme="dark"\]/);
+  assert.match(css, /\.theme-choice-dark/);
 });
 
 test("removes all starter-only assets and metadata", async () => {

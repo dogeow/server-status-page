@@ -23,6 +23,13 @@ class OverviewController extends Controller
             ->selectRaw('COALESCE(SUM(observed_seconds), 0) as observed, COALESCE(SUM(available_seconds), 0) as available')
             ->first();
         $observed = (int) ($availability?->observed ?? 0);
+        $recentEvents = OutboxEvent::query()->latest('created_at')->limit(10)->get();
+        $componentNames = Component::query()
+            ->whereIn('id', $recentEvents->map(fn (OutboxEvent $event) => $event->payload['component_id'] ?? ($event->aggregate_type === 'component' ? $event->aggregate_id : null))->filter())
+            ->pluck('name', 'id');
+        $monitorNames = Monitor::query()
+            ->whereIn('id', $recentEvents->pluck('payload')->pluck('monitor_id')->filter())
+            ->pluck('name', 'id');
 
         return response()->json([
             'components' => [
@@ -42,12 +49,34 @@ class OverviewController extends Controller
                 'latency_ms' => $result->latency_ms,
                 'updated_at' => $result->scheduled_at?->toIso8601String(),
             ]),
-            'recent_events' => OutboxEvent::query()->latest('created_at')->limit(10)->get()->map(fn (OutboxEvent $event) => [
-                'id' => $event->id,
-                'event' => $event->type,
-                'message' => $event->payload['title'] ?? $event->payload['error_code'] ?? null,
-                'created_at' => $event->created_at?->toIso8601String(),
-            ]),
+            'recent_events' => $recentEvents->map(function (OutboxEvent $event) use ($componentNames, $monitorNames): array {
+                $payload = $event->payload ?? [];
+                $componentId = $payload['component_id'] ?? ($event->aggregate_type === 'component' ? $event->aggregate_id : null);
+                $monitorId = $payload['monitor_id'] ?? ($event->aggregate_type === 'monitor' ? $event->aggregate_id : null);
+                $targetName = match ($event->aggregate_type) {
+                    'component' => $componentNames->get((int) $componentId),
+                    'monitor' => $monitorNames->get((int) $monitorId),
+                    'agent' => $payload['name'] ?? null,
+                    'incident', 'maintenance_window' => $payload['title'] ?? null,
+                    default => $payload['title'] ?? $componentNames->get((int) $componentId) ?? $monitorNames->get((int) $monitorId),
+                };
+
+                return [
+                    'id' => $event->id,
+                    'event' => $event->type,
+                    'target_name' => $targetName,
+                    'from_status' => $payload['from'] ?? null,
+                    'to_status' => $payload['to'] ?? null,
+                    'status' => $payload['status'] ?? null,
+                    'severity' => $payload['severity'] ?? null,
+                    'error_code' => $payload['error_code'] ?? null,
+                    'expires_at' => $payload['expires_at'] ?? null,
+                    'last_seen_at' => $payload['last_seen_at'] ?? null,
+                    'starts_at' => $payload['starts_at'] ?? null,
+                    'ends_at' => $payload['ends_at'] ?? null,
+                    'created_at' => $event->created_at?->toIso8601String(),
+                ];
+            }),
             'pending_outbox' => OutboxEvent::query()->whereNull('processed_at')->count(),
             'generated_at' => now()->toIso8601String(),
         ]);
