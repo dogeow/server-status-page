@@ -13,6 +13,9 @@ export type DailyStatusPeriod = {
   durationSeconds: number;
   ongoing: boolean;
   componentName?: string | null;
+  incidentId?: string | null;
+  incidentTitle?: string | null;
+  incidentMessage?: string | null;
 };
 
 export type DailyStatus = {

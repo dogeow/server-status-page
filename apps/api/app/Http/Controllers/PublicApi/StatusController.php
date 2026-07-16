@@ -27,6 +27,12 @@ class StatusController extends Controller
                     ->where('started_at', '<', $now)
                     ->where(fn ($nested) => $nested->whereNull('ended_at')->orWhere('ended_at', '>', $from->utc()))
                     ->orderBy('started_at'),
+                'incidents' => fn ($componentIncidents) => $componentIncidents
+                    ->where('is_public', true)
+                    ->where('started_at', '<', $now)
+                    ->where(fn ($nested) => $nested->whereNull('resolved_at')->orWhere('resolved_at', '>', $from->utc()))
+                    ->with('updates')
+                    ->latest('started_at'),
             ]),
             'incidents' => fn ($query) => $query->where('is_public', true)->whereNull('resolved_at')->with(['updates', 'components:id,name,slug'])->latest('started_at'),
             'maintenanceWindows' => fn ($query) => $query->where('ends_at', '>=', now())->whereNotIn('status', ['cancelled', 'completed'])->with('components:id,name,slug')->orderBy('starts_at'),
@@ -124,6 +130,12 @@ class StatusController extends Controller
                 ->where('started_at', '<', $toExclusive)
                 ->where(fn ($nested) => $nested->whereNull('ended_at')->orWhere('ended_at', '>', $fromInstant))
                 ->orderBy('started_at'),
+            'incidents' => fn ($componentIncidents) => $componentIncidents
+                ->where('is_public', true)
+                ->where('started_at', '<', $toExclusive)
+                ->where(fn ($nested) => $nested->whereNull('resolved_at')->orWhere('resolved_at', '>', $fromInstant))
+                ->with('updates')
+                ->latest('started_at'),
         ])]);
         $incidents = $page->incidents()
             ->where('is_public', true)
@@ -305,6 +317,15 @@ class StatusController extends Controller
                 ];
                 if ($includeComponentName) {
                     $payload['component_name'] = $component->name;
+                }
+
+                $incident = $component->incidents->first(fn (Incident $candidate) => $candidate->started_at->lessThan($endedAt)
+                    && ($candidate->resolved_at === null || $candidate->resolved_at->greaterThan($startedAt)));
+                if ($incident) {
+                    $latestUpdate = $incident->updates->sortByDesc('created_at')->first();
+                    $payload['incident_id'] = $incident->id;
+                    $payload['incident_title'] = $incident->title;
+                    $payload['incident_message'] = $latestUpdate?->message;
                 }
 
                 return $payload;

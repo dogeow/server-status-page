@@ -41,6 +41,21 @@ class StateMachineTest extends TestCase
         $this->assertNotNull(Incident::query()->sole()->resolved_at);
     }
 
+    public function test_expiring_tls_certificate_is_an_admin_warning_not_an_availability_failure(): void
+    {
+        [$agent, $monitor, $component] = $this->fixture();
+        $monitor->update(['type' => 'tls']);
+        $expiresAt = '2026-07-22T17:25:17Z';
+
+        $this->submitResult($agent, $monitor, 'failed', 0, 100, 'tls_certificate_expiring', ['expires_at' => $expiresAt])->assertAccepted();
+        $this->submitResult($agent, $monitor, 'failed', 1, 100, 'tls_certificate_expiring', ['expires_at' => $expiresAt])->assertAccepted();
+
+        $this->assertSame(ComponentStatus::Operational->value, $monitor->fresh()->status);
+        $this->assertSame(ComponentStatus::Operational->value, $component->fresh()->status);
+        $this->assertDatabaseCount('incidents', 0);
+        $this->assertSame(1, OutboxEvent::query()->where('type', 'monitor.tls_certificate_expiring')->count());
+    }
+
     public function test_result_idempotency_does_not_advance_failure_counter_twice(): void
     {
         [$agent, $monitor] = $this->fixture();
@@ -161,10 +176,20 @@ class StateMachineTest extends TestCase
         return [$agent, $monitor, $component];
     }
 
-    private function submitResult(Agent $agent, Monitor $monitor, string $status, int $offset, int $latencyMs = 100)
+    private function submitResult(
+        Agent $agent,
+        Monitor $monitor,
+        string $status,
+        int $offset,
+        int $latencyMs = 100,
+        ?string $errorCode = null,
+        array $metrics = [],
+    )
     {
         $payload = $this->payload($monitor, $status, now()->startOfSecond()->addSeconds($offset)->toIso8601String());
         $payload['results'][0]['latency_ms'] = $latencyMs;
+        $payload['results'][0]['error_code'] = $errorCode ?? ($status === 'ok' ? null : $status);
+        $payload['results'][0]['metrics'] = $metrics;
 
         return $this->signed($agent, $payload);
     }

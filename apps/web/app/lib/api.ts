@@ -54,6 +54,9 @@ function normalizeStatusPeriods(value: unknown): DailyStatus["statusPeriods"] {
       componentName: row.component_name || row.componentName
         ? String(row.component_name ?? row.componentName)
         : null,
+      incidentId: row.incident_id || row.incidentId ? String(row.incident_id ?? row.incidentId) : null,
+      incidentTitle: row.incident_title || row.incidentTitle ? String(row.incident_title ?? row.incidentTitle) : null,
+      incidentMessage: row.incident_message || row.incidentMessage ? String(row.incident_message ?? row.incidentMessage) : null,
     };
   }).filter((period) => period.startedAt !== "");
 }

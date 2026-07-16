@@ -472,6 +472,16 @@ textarea:focus-visible {
 .history-tooltip-period strong,
 .history-tooltip-period span { white-space: nowrap; }
 
+.history-tooltip-period .history-tooltip-incident {
+  color: #fff;
+  font-weight: 650;
+}
+
+.history-tooltip-period .history-tooltip-message {
+  max-width: 280px;
+  white-space: normal;
+}
+
 .history-tooltip::after {
   position: absolute;
   top: 100%;

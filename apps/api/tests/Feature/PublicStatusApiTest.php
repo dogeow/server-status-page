@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Component;
 use App\Models\ComponentGroup;
 use App\Models\DailyRollup;
+use App\Models\Incident;
 use App\Models\StatusInterval;
 use App\Models\StatusPage;
 use Carbon\CarbonImmutable;
@@ -122,6 +123,17 @@ class PublicStatusApiTest extends TestCase
             'started_at' => CarbonImmutable::parse('2026-07-14 20:30:00 UTC'),
             'ended_at' => null,
         ]);
+        $incident = Incident::query()->create([
+            'status_page_id' => $page->id,
+            'title' => 'Game 登录异常',
+            'status' => 'resolved',
+            'impact' => 'major_outage',
+            'is_public' => true,
+            'started_at' => CarbonImmutable::parse('2026-07-14 18:00:00 UTC'),
+            'resolved_at' => CarbonImmutable::parse('2026-07-15 09:00:00 UTC'),
+        ]);
+        $incident->components()->attach($component->id);
+        $incident->updates()->create(['status' => 'resolved', 'message' => '登录服务已经恢复。']);
 
         foreach (['/api/public/v1/status', '/api/public/v1/history?from=2026-07-15&to=2026-07-15'] as $url) {
             $response = $this->getJson($url)->assertOk();
@@ -135,6 +147,9 @@ class PublicStatusApiTest extends TestCase
             $this->assertSame('2026-07-14T20:30:00+00:00', $componentPeriod['ended_at']);
             $this->assertSame(9000, $componentPeriod['duration_seconds']);
             $this->assertFalse($componentPeriod['ongoing']);
+            $this->assertSame($incident->id, $componentPeriod['incident_id']);
+            $this->assertSame('Game 登录异常', $componentPeriod['incident_title']);
+            $this->assertSame('登录服务已经恢复。', $componentPeriod['incident_message']);
 
             $componentPath = str_contains($url, '/status')
                 ? 'groups.0.components.0.daily_history.89.status_periods.1'

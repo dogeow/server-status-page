@@ -70,6 +70,9 @@ function normalizeHistoryPeriods(value: unknown): DailyStatusPeriod[] {
       componentName: row.component_name || row.componentName
         ? String(row.component_name ?? row.componentName)
         : null,
+      incidentId: row.incident_id || row.incidentId ? String(row.incident_id ?? row.incidentId) : null,
+      incidentTitle: row.incident_title || row.incidentTitle ? String(row.incident_title ?? row.incidentTitle) : null,
+      incidentMessage: row.incident_message || row.incidentMessage ? String(row.incident_message ?? row.incidentMessage) : null,
     };
   }).filter((period) => period.startedAt !== "");
 }
@@ -168,13 +171,14 @@ function HistoryBars({ history, label, anchor, timezone }: { history: DailyStatu
                 <span className="history-tooltip-summary">{statusLabel}{uptimeLabel ? ` · ${uptimeLabel}` : ""}</span>
                 {periods.length ? (
                   <span className="history-tooltip-periods">
-                    {periods.slice(0, 3).map((period, periodIndex) => (
+                    {periods.map((period, periodIndex) => (
                       <span className="history-tooltip-period" key={`${period.startedAt}-${periodIndex}`}>
                         <strong>{period.componentName ? `${period.componentName} · ` : ""}{statusCopy[period.status].label}</strong>
                         <span>{formatStatusPeriod(period, day.date, timezone)} · 持续 {formatDuration(period.durationSeconds)}</span>
+                        {period.incidentTitle ? <span className="history-tooltip-incident">事件：{period.incidentTitle}</span> : null}
+                        {period.incidentMessage ? <span className="history-tooltip-message">{period.incidentMessage}</span> : null}
                       </span>
                     ))}
-                    {periods.length > 3 ? <span>另有 {periods.length - 3} 个异常时段</span> : null}
                   </span>
                 ) : null}
               </span>

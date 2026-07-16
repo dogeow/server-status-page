@@ -29,10 +29,11 @@ class StateEvaluator
     {
         $previous = $monitor->status;
         $status = strtolower($result->status);
-        $isSuccess = in_array($status, ['ok', 'success', 'operational', 'pass'], true);
+        $isCertificateExpiryWarning = $result->error_code === 'tls_certificate_expiring';
+        $isSuccess = $isCertificateExpiryWarning || in_array($status, ['ok', 'success', 'operational', 'pass'], true);
         $isConfigurationError = in_array($status, ['config_error', 'auth_error'], true);
         $isUnknown = $status === 'unknown';
-        $isSlow = $isSuccess && $monitor->slow_threshold_ms && $result->latency_ms > $monitor->slow_threshold_ms;
+        $isSlow = ! $isCertificateExpiryWarning && $isSuccess && $monitor->slow_threshold_ms && $result->latency_ms > $monitor->slow_threshold_ms;
 
         if ($isUnknown) {
             $monitor->status = ComponentStatus::Unknown->value;
@@ -62,10 +63,26 @@ class StateEvaluator
                 ]);
             }
         } elseif ($isSuccess) {
+            if ($isCertificateExpiryWarning) {
+                $monitor->loadMissing('component.group');
+                $shouldAlert = $monitor->last_error_code !== $result->error_code
+                    || ! $monitor->last_alerted_at
+                    || $monitor->last_alerted_at->lte(now()->subDay());
+                if ($shouldAlert && ! $suppressAlerts) {
+                    $monitor->last_alerted_at = now();
+                    $this->outbox('monitor.tls_certificate_expiring', 'monitor', $monitor->id, [
+                        'monitor_id' => $monitor->id,
+                        'component_id' => $monitor->component_id,
+                        'status_page_id' => $monitor->component->group->status_page_id,
+                        'error_code' => $result->error_code,
+                        'expires_at' => data_get($result->metrics, 'expires_at'),
+                    ]);
+                }
+            }
             $monitor->consecutive_failures = 0;
             $monitor->consecutive_successes = $isSlow ? 0 : $monitor->consecutive_successes + 1;
             $monitor->consecutive_slow = $isSlow ? $monitor->consecutive_slow + 1 : 0;
-            $monitor->last_error_code = null;
+            $monitor->last_error_code = $isCertificateExpiryWarning ? $result->error_code : null;
             $monitor->last_success_at = $result->scheduled_at;
 
             if ($monitor->consecutive_slow >= 3) {
@@ -168,7 +185,10 @@ class StateEvaluator
                 'started_at' => $at,
             ]);
             $incident->components()->attach($component->id);
-            $incident->updates()->create(['status' => 'investigating', 'message' => '自动监控检测到服务异常，正在调查。']);
+            $incident->updates()->create([
+                'status' => 'investigating',
+                'message' => '自动监控检测到服务异常，等待管理员处理。',
+            ]);
             $this->outbox('incident.created', 'incident', $incident->id, $this->incidentPayload($incident, $component));
         } elseif ($impact && $active && $active->impact !== $impact) {
             $active->update(['impact' => $impact]);

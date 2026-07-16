@@ -388,14 +388,24 @@ func runTLS(ctx context.Context, raw json.RawMessage, connectTimeout time.Durati
 		return Outcome{Status: model.StatusFailed, ErrorCode: "tls_no_certificate", Message: "server returned no certificate"}
 	}
 	expires := state.PeerCertificates[0].NotAfter
-	days := int(time.Until(expires).Hours() / 24)
-	if !expires.After(time.Now()) {
-		return Outcome{Status: model.StatusFailed, ErrorCode: "tls_certificate_expired", Message: "TLS certificate has expired", Metrics: map[string]any{"valid_days": days, "expires_at": expires.UTC().Format(time.RFC3339)}}
+	outcome := tlsCertificateOutcome(expires, cfg.MinValidDays, time.Now())
+	if outcome.Status != model.StatusOK || outcome.ErrorCode != "" {
+		return outcome
 	}
-	if days < cfg.MinValidDays {
-		return Outcome{Status: model.StatusFailed, ErrorCode: "tls_certificate_expiring", Message: "TLS certificate expires too soon", Metrics: map[string]any{"valid_days": days, "expires_at": expires.UTC().Format(time.RFC3339)}}
+	outcome.Metrics["tls_version"] = tls.VersionName(state.Version)
+	return outcome
+}
+
+func tlsCertificateOutcome(expires time.Time, minValidDays int, now time.Time) Outcome {
+	days := int(expires.Sub(now).Hours() / 24)
+	metrics := map[string]any{"valid_days": days, "expires_at": expires.UTC().Format(time.RFC3339)}
+	if !expires.After(now) {
+		return Outcome{Status: model.StatusFailed, ErrorCode: "tls_certificate_expired", Message: "TLS certificate has expired", Metrics: metrics}
 	}
-	return Outcome{Status: model.StatusOK, Metrics: map[string]any{"valid_days": days, "expires_at": expires.UTC().Format(time.RFC3339), "tls_version": tls.VersionName(state.Version)}}
+	if days < minValidDays {
+		return Outcome{Status: model.StatusOK, ErrorCode: "tls_certificate_expiring", Message: "TLS certificate expires too soon", Metrics: metrics}
+	}
+	return Outcome{Status: model.StatusOK, Metrics: metrics}
 }
 
 func randomHex(size int) string {

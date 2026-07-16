@@ -160,6 +160,19 @@ func TestDatastoreOperationTimeoutUsesTotalProbeDeadline(t *testing.T) {
 	}
 }
 
+func TestTLSCertificateNearExpiryIsAWarningNotAFailure(t *testing.T) {
+	now := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	outcome := tlsCertificateOutcome(now.Add(48*time.Hour), 7, now)
+	if outcome.Status != model.StatusOK || outcome.ErrorCode != "tls_certificate_expiring" {
+		t.Fatalf("status = %s, code = %s", outcome.Status, outcome.ErrorCode)
+	}
+
+	expired := tlsCertificateOutcome(now.Add(-time.Second), 7, now)
+	if expired.Status != model.StatusFailed || expired.ErrorCode != "tls_certificate_expired" {
+		t.Fatalf("expired status = %s, code = %s", expired.Status, expired.ErrorCode)
+	}
+}
+
 func TestShellProbeIsForbidden(t *testing.T) {
 	registry := NewRegistry(secret.NewResolver(""))
 	err := registry.Validate(model.Monitor{ID: "shell", Type: "shell", IntervalSeconds: 60, Config: json.RawMessage(`{"command":"true"}`)})
