@@ -83,6 +83,65 @@ class PublicStatusApiTest extends TestCase
         $this->travelBack();
     }
 
+    public function test_new_component_does_not_make_previous_group_history_unknown(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-07-16 01:00:00 UTC'));
+        $page = StatusPage::query()->create([
+            'name' => 'Status',
+            'slug' => 'main',
+            'timezone' => 'Asia/Shanghai',
+            'is_public' => true,
+        ]);
+        $group = ComponentGroup::query()->create([
+            'status_page_id' => $page->id,
+            'name' => 'API',
+            'slug' => 'api',
+        ]);
+        $existingComponent = Component::query()->create([
+            'component_group_id' => $group->id,
+            'name' => 'Existing API',
+            'slug' => 'existing-api',
+            'status' => 'operational',
+            'created_at' => CarbonImmutable::parse('2026-07-14 16:00:00 UTC'),
+        ]);
+        $newComponent = Component::query()->create([
+            'component_group_id' => $group->id,
+            'name' => 'New API',
+            'slug' => 'new-api',
+            'status' => 'operational',
+            'created_at' => CarbonImmutable::parse('2026-07-15 16:26:00 UTC'),
+        ]);
+        DailyRollup::query()->create([
+            'component_id' => $existingComponent->id,
+            'date' => '2026-07-15',
+            'uptime_percentage' => 100,
+            'observed_seconds' => 86400,
+            'available_seconds' => 86400,
+            'worst_status' => 'operational',
+        ]);
+        foreach ([$existingComponent, $newComponent] as $component) {
+            DailyRollup::query()->create([
+                'component_id' => $component->id,
+                'date' => '2026-07-16',
+                'uptime_percentage' => 100,
+                'observed_seconds' => 3600,
+                'available_seconds' => 3600,
+                'worst_status' => 'operational',
+            ]);
+        }
+
+        $status = $this->getJson('/api/public/v1/status')->assertOk();
+        $this->assertSame('2026-07-15', $status->json('groups.0.daily_history.88.date'));
+        $this->assertSame('operational', $status->json('groups.0.daily_history.88.status'));
+        $this->assertEquals(100.0, $status->json('groups.0.daily_history.88.uptime_percent'));
+
+        $history = $this->getJson('/api/public/v1/history?from=2026-07-15&to=2026-07-16')->assertOk();
+        $this->assertSame('operational', $history->json('groups.0.daily_history.0.status'));
+        $this->assertEquals(100.0, $history->json('groups.0.daily_history.0.uptime_percent'));
+
+        $this->travelBack();
+    }
+
     public function test_public_history_exposes_clipped_status_periods_with_duration(): void
     {
         $this->travelTo(CarbonImmutable::parse('2026-07-15 09:00:00 UTC'));

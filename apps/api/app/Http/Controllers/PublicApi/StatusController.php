@@ -42,7 +42,8 @@ class StatusController extends Controller
             $components = $group->components->map(fn (Component $component) => $this->componentPayload($component, $from, $timezone, $now));
             $dailyHistory = collect(range(0, 89))->map(function (int $offset) use ($group, $from, $now, $timezone) {
                 $date = $from->addDays($offset)->toDateString();
-                $rollups = $group->components->map(fn (Component $component) => $component->rollups->first(fn ($rollup) => $rollup->date->toDateString() === $date));
+                $componentsForDate = $this->componentsExistingOnDate($group->components, $date, $timezone);
+                $rollups = $componentsForDate->map(fn (Component $component) => $component->rollups->first(fn ($rollup) => $rollup->date->toDateString() === $date));
                 $present = $rollups->filter();
                 $latencies = $present->pluck('average_latency_ms')->filter(fn ($value) => $value !== null);
 
@@ -52,7 +53,7 @@ class StatusController extends Controller
                     'uptime_percent' => $this->rollupUptime($present),
                     'latency_ms' => $latencies->isEmpty() ? null : (int) round($latencies->avg()),
                     'maintenance' => $present->contains(fn ($rollup) => $rollup->maintenance_seconds > 0),
-                    'status_periods' => $this->groupStatusPeriods($group->components, $date, $timezone, $now),
+                    'status_periods' => $this->groupStatusPeriods($componentsForDate, $date, $timezone, $now),
                 ];
             });
 
@@ -169,7 +170,8 @@ class StatusController extends Controller
                 ];
             });
             $dailyHistory = $dates->map(function (string $date) use ($group, $now, $timezone): array {
-                $rollups = $group->components->map(fn (Component $component) => $component->rollups->first(fn ($rollup) => $rollup->date->toDateString() === $date));
+                $componentsForDate = $this->componentsExistingOnDate($group->components, $date, $timezone);
+                $rollups = $componentsForDate->map(fn (Component $component) => $component->rollups->first(fn ($rollup) => $rollup->date->toDateString() === $date));
                 $present = $rollups->filter();
                 $latencies = $present->pluck('average_latency_ms')->filter(fn ($value) => $value !== null);
 
@@ -179,7 +181,7 @@ class StatusController extends Controller
                     'uptime_percent' => $this->rollupUptime($present),
                     'latency_ms' => $latencies->isEmpty() ? null : (int) round($latencies->avg()),
                     'maintenance' => $present->contains(fn ($rollup) => $rollup->maintenance_seconds > 0),
-                    'status_periods' => $this->groupStatusPeriods($group->components, $date, $timezone, $now),
+                    'status_periods' => $this->groupStatusPeriods($componentsForDate, $date, $timezone, $now),
                 ];
             });
             $latencies = $components->pluck('latency_ms')->filter(fn ($value) => $value !== null);
@@ -342,6 +344,13 @@ class StatusController extends Controller
             ->sortBy('started_at')
             ->values()
             ->all();
+    }
+
+    private function componentsExistingOnDate($components, string $date, string $timezone)
+    {
+        $dayEnd = CarbonImmutable::parse($date, $timezone)->startOfDay()->addDay()->utc();
+
+        return $components->filter(fn (Component $component) => $component->created_at === null || $component->created_at->lessThan($dayEnd));
     }
 
     private function incidentPayload(Incident $incident): array
