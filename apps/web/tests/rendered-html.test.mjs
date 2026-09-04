@@ -75,7 +75,7 @@ test("history bars expose exclusive click, hover and keyboard-accessible date de
   assert.match(source, /onMouseEnter=\{\(\) => setPreview/);
   assert.match(source, /onFocus=\{\(\) => setPreview/);
   assert.match(source, /pointerdown/);
-  assert.match(source, /history-bar\[aria-expanded='true'\]/);
+  assert.match(source, /target\.closest\("\.history-bar"\)/);
   assert.match(source, /aria-label=\{detailLabel\}/);
   assert.match(source, /% 可用率/);
   assert.match(source, /<small>可用率<\/small>/);

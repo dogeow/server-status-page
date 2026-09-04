@@ -463,7 +463,8 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         clearHistoryTooltip();
         return;
       }
-      if (!target.closest(".history-bar[aria-expanded='true']")) {
+      // Any history bar click owns selection via onClick; only dismiss for true outside presses.
+      if (!target.closest(".history-bar")) {
         clearHistoryTooltip();
       }
     };
