@@ -144,8 +144,9 @@ function HistoryBars({
   timezone,
   scopeId,
   selected,
-  dismissVersion,
+  preview,
   onSelect,
+  onPreview,
 }: {
   history: DailyStatus[];
   label: string;
@@ -153,14 +154,14 @@ function HistoryBars({
   timezone: string;
   scopeId: string;
   selected: HistoryTooltipSelection;
-  dismissVersion: number;
+  preview: HistoryTooltipSelection;
   onSelect: (next: HistoryTooltipSelection) => void;
+  onPreview: (next: HistoryTooltipSelection) => void;
 }) {
   const bars = fillHistory(history, anchor);
-  const [preview, setPreview] = useState<{ version: number; index: number } | null>(null);
-  const selectedIndex = selected?.scopeId === scopeId ? selected.index : null;
-  const previewIndex = preview?.version === dismissVersion ? preview.index : null;
-  const visibleIndex = previewIndex ?? selectedIndex;
+  // Page-level exclusivity: at most one tooltip across all groups/components.
+  const active = preview ?? selected;
+  const visibleIndex = active?.scopeId === scopeId ? active.index : null;
 
   return (
     <div className="history-bars" aria-label={`${label} 最近 90 天状态`}>
@@ -194,10 +195,10 @@ function HistoryBars({
               }
               onSelect({ scopeId, index });
             }}
-            onMouseEnter={() => setPreview({ version: dismissVersion, index })}
-            onMouseLeave={() => setPreview(null)}
-            onFocus={() => setPreview({ version: dismissVersion, index })}
-            onBlur={() => setPreview(null)}
+            onMouseEnter={() => onPreview({ scopeId, index })}
+            onMouseLeave={() => onPreview(null)}
+            onFocus={() => onPreview({ scopeId, index })}
+            onBlur={() => onPreview(null)}
           >
             {visibleIndex === index ? (
               <span className="history-tooltip" role="tooltip">
@@ -231,15 +232,17 @@ function ComponentRow({
   historyAnchor,
   timezone,
   selectedHistory,
-  dismissVersion,
+  previewHistory,
   onSelectHistory,
+  onPreviewHistory,
 }: {
   component: StatusComponent;
   historyAnchor: string;
   timezone: string;
   selectedHistory: HistoryTooltipSelection;
-  dismissVersion: number;
+  previewHistory: HistoryTooltipSelection;
   onSelectHistory: (next: HistoryTooltipSelection) => void;
+  onPreviewHistory: (next: HistoryTooltipSelection) => void;
 }) {
   return (
     <div className="component-row">
@@ -261,8 +264,9 @@ function ComponentRow({
         timezone={timezone}
         scopeId={`component:${component.id}`}
         selected={selectedHistory}
-        dismissVersion={dismissVersion}
+        preview={previewHistory}
         onSelect={onSelectHistory}
+        onPreview={onPreviewHistory}
       />
     </div>
   );
@@ -273,15 +277,17 @@ function GroupRow({
   historyAnchor,
   timezone,
   selectedHistory,
-  dismissVersion,
+  previewHistory,
   onSelectHistory,
+  onPreviewHistory,
 }: {
   group: StatusGroup;
   historyAnchor: string;
   timezone: string;
   selectedHistory: HistoryTooltipSelection;
-  dismissVersion: number;
+  previewHistory: HistoryTooltipSelection;
   onSelectHistory: (next: HistoryTooltipSelection) => void;
+  onPreviewHistory: (next: HistoryTooltipSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -311,8 +317,9 @@ function GroupRow({
         timezone={timezone}
         scopeId={`group:${group.id}`}
         selected={selectedHistory}
-        dismissVersion={dismissVersion}
+        preview={previewHistory}
         onSelect={onSelectHistory}
+        onPreview={onPreviewHistory}
       />
       {open ? (
         <div className="component-list">
@@ -323,8 +330,9 @@ function GroupRow({
               historyAnchor={historyAnchor}
               timezone={timezone}
               selectedHistory={selectedHistory}
-              dismissVersion={dismissVersion}
+              previewHistory={previewHistory}
               onSelectHistory={onSelectHistory}
+              onPreviewHistory={onPreviewHistory}
             />
           ))}
         </div>
@@ -355,7 +363,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   const [displayGroups, setDisplayGroups] = useState(initialStatus.groups);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistory, setSelectedHistory] = useState<HistoryTooltipSelection>(null);
-  const [dismissVersion, setDismissVersion] = useState(0);
+  const [previewHistory, setPreviewHistory] = useState<HistoryTooltipSelection>(null);
   const copy = statusCopy[initialStatus.overallStatus];
   const visibleGroups = periodOffset === 0 ? initialStatus.groups : displayGroups;
   const period = useMemo(
@@ -371,14 +379,12 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
 
   function clearHistoryTooltip() {
     setSelectedHistory(null);
-    setDismissVersion((value) => value + 1);
+    setPreviewHistory(null);
   }
 
   function selectHistoryTooltip(next: HistoryTooltipSelection) {
     setSelectedHistory(next);
-    if (next === null) {
-      setDismissVersion((value) => value + 1);
-    }
+    setPreviewHistory(null);
   }
 
   async function changePeriod(nextOffset: number) {
@@ -448,7 +454,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   }
 
   useEffect(() => {
-    if (!selectedHistory) return;
+    if (!selectedHistory && !previewHistory) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -475,7 +481,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [selectedHistory]);
+  }, [selectedHistory, previewHistory]);
 
   useEffect(() => {
     const poll = window.setInterval(() => router.refresh(), 30_000);
@@ -595,8 +601,9 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
                 historyAnchor={period.to}
                 timezone={initialStatus.statusPage.timezone}
                 selectedHistory={selectedHistory}
-                dismissVersion={dismissVersion}
+                previewHistory={previewHistory}
                 onSelectHistory={selectHistoryTooltip}
+                onPreviewHistory={setPreviewHistory}
               />
             ))
           ) : (
