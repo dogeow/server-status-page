@@ -67,24 +67,30 @@ test("history bars expose exclusive click, hover and keyboard-accessible date de
   assert.match(source, /持续 \{formatDuration\(period\.durationSeconds\)\}/);
   assert.match(source, /isGenericRecoveryMessage\(period\.incidentMessage\)/);
   assert.match(source, /period\.ongoing \|\| !period\.endedAt/);
-  assert.match(source, /type HistoryTooltipSelection/);
-  assert.match(source, /selectedHistory/);
-  assert.match(source, /onSelect\(\{ scopeId, index \}\)/);
-  assert.match(source, /event\.key === "Escape"/);
+  assert.match(source, /previewHistory/);
+  assert.match(source, /const active = preview \?\? selected/);
+  assert.match(source, /active\?\.scopeId === scopeId/);
+  assert.match(source, /clearHistoryTooltip/);
+  assert.match(source, /selectHistoryTooltip/);
+  assert.match(source, /event\.key !== "Escape"/);
+  assert.match(source, /onMouseEnter=\{\(\) => onPreview/);
+  assert.match(source, /onFocus=\{\(\) => onPreview/);
   assert.match(source, /pointerdown/);
-  assert.match(source, /history-bar\[aria-expanded='true'\]/);
-  assert.match(source, /onMouseEnter=\{\(\) => setPreviewIndex/);
-  assert.match(source, /onFocus=\{\(\) => setPreviewIndex/);
+  assert.match(source, /target\.closest\("\.history-bar"\)/);
   assert.match(source, /aria-label=\{detailLabel\}/);
   assert.match(source, /% 可用率/);
   assert.match(source, /<small>可用率<\/small>/);
   assert.match(source, /系统状态/);
   assert.doesNotMatch(source, /System status/);
   assert.doesNotMatch(source, /<small>uptime<\/small>/);
+  assert.doesNotMatch(source, /useState<\{ version: number; index: number \}/);
 
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /\.history-tooltip-period \+ \.history-tooltip-period\s*\{[^}]*border-top:/);
   assert.match(css, /\.status-card\s*\{[^}]*overflow: visible/);
+  assert.match(css, /\.drawer\s*\{[\s\S]*?overflow-x: hidden/);
+  assert.match(css, /\.drawer \.form-grid\s*\{[^}]*grid-template-columns: 1fr/);
+  assert.match(css, /\.form-grid\s*\{[^}]*minmax\(0, 1fr\)/);
 
   const tablet = css.slice(css.indexOf("@media (max-width: 900px)"));
   assert.match(tablet, /\.group-row\s*\{[^}]*overflow: visible/);

@@ -144,7 +144,9 @@ function HistoryBars({
   timezone,
   scopeId,
   selected,
+  preview,
   onSelect,
+  onPreview,
 }: {
   history: DailyStatus[];
   label: string;
@@ -152,12 +154,14 @@ function HistoryBars({
   timezone: string;
   scopeId: string;
   selected: HistoryTooltipSelection;
+  preview: HistoryTooltipSelection;
   onSelect: (next: HistoryTooltipSelection) => void;
+  onPreview: (next: HistoryTooltipSelection) => void;
 }) {
   const bars = fillHistory(history, anchor);
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const selectedIndex = selected?.scopeId === scopeId ? selected.index : null;
-  const visibleIndex = previewIndex ?? selectedIndex;
+  // Page-level exclusivity: at most one tooltip across all groups/components.
+  const active = preview ?? selected;
+  const visibleIndex = active?.scopeId === scopeId ? active.index : null;
 
   return (
     <div className="history-bars" aria-label={`${label} 最近 90 天状态`}>
@@ -191,10 +195,10 @@ function HistoryBars({
               }
               onSelect({ scopeId, index });
             }}
-            onMouseEnter={() => setPreviewIndex(index)}
-            onMouseLeave={() => setPreviewIndex(null)}
-            onFocus={() => setPreviewIndex(index)}
-            onBlur={() => setPreviewIndex(null)}
+            onMouseEnter={() => onPreview({ scopeId, index })}
+            onMouseLeave={() => onPreview(null)}
+            onFocus={() => onPreview({ scopeId, index })}
+            onBlur={() => onPreview(null)}
           >
             {visibleIndex === index ? (
               <span className="history-tooltip" role="tooltip">
@@ -228,13 +232,17 @@ function ComponentRow({
   historyAnchor,
   timezone,
   selectedHistory,
+  previewHistory,
   onSelectHistory,
+  onPreviewHistory,
 }: {
   component: StatusComponent;
   historyAnchor: string;
   timezone: string;
   selectedHistory: HistoryTooltipSelection;
+  previewHistory: HistoryTooltipSelection;
   onSelectHistory: (next: HistoryTooltipSelection) => void;
+  onPreviewHistory: (next: HistoryTooltipSelection) => void;
 }) {
   return (
     <div className="component-row">
@@ -256,7 +264,9 @@ function ComponentRow({
         timezone={timezone}
         scopeId={`component:${component.id}`}
         selected={selectedHistory}
+        preview={previewHistory}
         onSelect={onSelectHistory}
+        onPreview={onPreviewHistory}
       />
     </div>
   );
@@ -267,13 +277,17 @@ function GroupRow({
   historyAnchor,
   timezone,
   selectedHistory,
+  previewHistory,
   onSelectHistory,
+  onPreviewHistory,
 }: {
   group: StatusGroup;
   historyAnchor: string;
   timezone: string;
   selectedHistory: HistoryTooltipSelection;
+  previewHistory: HistoryTooltipSelection;
   onSelectHistory: (next: HistoryTooltipSelection) => void;
+  onPreviewHistory: (next: HistoryTooltipSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -303,7 +317,9 @@ function GroupRow({
         timezone={timezone}
         scopeId={`group:${group.id}`}
         selected={selectedHistory}
+        preview={previewHistory}
         onSelect={onSelectHistory}
+        onPreview={onPreviewHistory}
       />
       {open ? (
         <div className="component-list">
@@ -314,7 +330,9 @@ function GroupRow({
               historyAnchor={historyAnchor}
               timezone={timezone}
               selectedHistory={selectedHistory}
+              previewHistory={previewHistory}
               onSelectHistory={onSelectHistory}
+              onPreviewHistory={onPreviewHistory}
             />
           ))}
         </div>
@@ -345,6 +363,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   const [displayGroups, setDisplayGroups] = useState(initialStatus.groups);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistory, setSelectedHistory] = useState<HistoryTooltipSelection>(null);
+  const [previewHistory, setPreviewHistory] = useState<HistoryTooltipSelection>(null);
   const copy = statusCopy[initialStatus.overallStatus];
   const visibleGroups = periodOffset === 0 ? initialStatus.groups : displayGroups;
   const period = useMemo(
@@ -358,8 +377,18 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   const canGoPrevious = initialStatus.historyAvailableFrom !== null
     && previousPeriod.to >= initialStatus.historyAvailableFrom;
 
-  async function changePeriod(nextOffset: number) {
+  function clearHistoryTooltip() {
     setSelectedHistory(null);
+    setPreviewHistory(null);
+  }
+
+  function selectHistoryTooltip(next: HistoryTooltipSelection) {
+    setSelectedHistory(next);
+    setPreviewHistory(null);
+  }
+
+  async function changePeriod(nextOffset: number) {
+    clearHistoryTooltip();
     setPeriodOffset(nextOffset);
     if (nextOffset === 0) {
       return;
@@ -425,19 +454,24 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   }
 
   useEffect(() => {
-    if (!selectedHistory) return;
+    if (!selectedHistory && !previewHistory) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedHistory(null);
+      if (event.key !== "Escape") return;
+      clearHistoryTooltip();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
     };
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) {
-        setSelectedHistory(null);
+        clearHistoryTooltip();
         return;
       }
-      if (!target.closest(".history-bar[aria-expanded='true']")) {
-        setSelectedHistory(null);
+      // Any history bar click owns selection via onClick; only dismiss for true outside presses.
+      if (!target.closest(".history-bar")) {
+        clearHistoryTooltip();
       }
     };
 
@@ -447,7 +481,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [selectedHistory]);
+  }, [selectedHistory, previewHistory]);
 
   useEffect(() => {
     const poll = window.setInterval(() => router.refresh(), 30_000);
@@ -567,7 +601,9 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
                 historyAnchor={period.to}
                 timezone={initialStatus.statusPage.timezone}
                 selectedHistory={selectedHistory}
-                onSelectHistory={setSelectedHistory}
+                previewHistory={previewHistory}
+                onSelectHistory={selectHistoryTooltip}
+                onPreviewHistory={setPreviewHistory}
               />
             ))
           ) : (
