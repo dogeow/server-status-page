@@ -12,7 +12,7 @@ export default function AdminLoginPage() {
         <div className="admin-login-head">
           <Link className="brand" href="/">
             <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
-            <span>System Status</span>
+            <span>系统状态</span>
           </Link>
           <ThemeToggle />
         </div>

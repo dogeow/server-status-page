@@ -15,20 +15,20 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: {
-    default: "System Status",
-    template: "%s · System Status",
+    default: "系统状态",
+    template: "%s · 系统状态",
   },
   description: "服务可用性、事件、维护与实时监控状态。",
   openGraph: {
     type: "website",
     locale: "zh_CN",
-    title: "System Status",
+    title: "系统状态",
     description: "服务可用性、事件、维护与实时监控状态。",
-    images: [{ url: "/og.png", width: 1731, height: 909, alt: "System Status 监控概览" }],
+    images: [{ url: "/og.png", width: 1731, height: 909, alt: "系统状态监控概览" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "System Status",
+    title: "系统状态",
     description: "服务可用性、事件、维护与实时监控状态。",
     images: ["/og.png"],
   },

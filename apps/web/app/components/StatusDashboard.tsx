@@ -14,6 +14,11 @@ import type {
 } from "../types";
 import { fillHistory, getHistoryPeriod } from "../lib/status-history";
 
+type HistoryTooltipSelection = {
+  scopeId: string;
+  index: number;
+} | null;
+
 const statusCopy: Record<ServiceStatus, { label: string; symbol: string }> = {
   operational: { label: "运行正常", symbol: "✓" },
   degraded: { label: "性能下降", symbol: "!" },
@@ -132,10 +137,26 @@ function StatusIcon({ status, small = false }: { status: ServiceStatus; small?: 
   );
 }
 
-function HistoryBars({ history, label, anchor, timezone }: { history: DailyStatus[]; label: string; anchor: string; timezone: string }) {
+function HistoryBars({
+  history,
+  label,
+  anchor,
+  timezone,
+  scopeId,
+  selected,
+  onSelect,
+}: {
+  history: DailyStatus[];
+  label: string;
+  anchor: string;
+  timezone: string;
+  scopeId: string;
+  selected: HistoryTooltipSelection;
+  onSelect: (next: HistoryTooltipSelection) => void;
+}) {
   const bars = fillHistory(history, anchor);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const selectedIndex = selected?.scopeId === scopeId ? selected.index : null;
   const visibleIndex = previewIndex ?? selectedIndex;
 
   return (
@@ -145,7 +166,7 @@ function HistoryBars({ history, label, anchor, timezone }: { history: DailyStatu
         const statusLabel = status === "unknown" && day.uptimePercent == null
           ? "暂无监控数据"
           : statusCopy[status].label;
-        const uptimeLabel = day.uptimePercent == null ? null : `${day.uptimePercent.toFixed(2)}% uptime`;
+        const uptimeLabel = day.uptimePercent == null ? null : `${day.uptimePercent.toFixed(2)}% 可用率`;
         const periods = day.statusPeriods ?? [];
         const periodLabel = periods.map((period) => {
           const component = period.componentName ? `${period.componentName} · ` : "";
@@ -163,7 +184,13 @@ function HistoryBars({ history, label, anchor, timezone }: { history: DailyStatu
             key={`${day.date}-${index}`}
             aria-label={detailLabel}
             aria-expanded={visibleIndex === index}
-            onClick={() => setSelectedIndex((current) => current === index ? null : index)}
+            onClick={() => {
+              if (selected?.scopeId === scopeId && selected.index === index) {
+                onSelect(null);
+                return;
+              }
+              onSelect({ scopeId, index });
+            }}
             onMouseEnter={() => setPreviewIndex(index)}
             onMouseLeave={() => setPreviewIndex(null)}
             onFocus={() => setPreviewIndex(index)}
@@ -196,7 +223,19 @@ function HistoryBars({ history, label, anchor, timezone }: { history: DailyStatu
   );
 }
 
-function ComponentRow({ component, historyAnchor, timezone }: { component: StatusComponent; historyAnchor: string; timezone: string }) {
+function ComponentRow({
+  component,
+  historyAnchor,
+  timezone,
+  selectedHistory,
+  onSelectHistory,
+}: {
+  component: StatusComponent;
+  historyAnchor: string;
+  timezone: string;
+  selectedHistory: HistoryTooltipSelection;
+  onSelectHistory: (next: HistoryTooltipSelection) => void;
+}) {
   return (
     <div className="component-row">
       <div className="component-title">
@@ -210,12 +249,32 @@ function ComponentRow({ component, historyAnchor, timezone }: { component: Statu
         {component.latencyMs != null ? <span>{Math.round(component.latencyMs)} ms</span> : null}
         <strong>{formatUptime(component.uptimePercent)}</strong>
       </div>
-      <HistoryBars history={component.dailyHistory} label={component.name} anchor={historyAnchor} timezone={timezone} />
+      <HistoryBars
+        history={component.dailyHistory}
+        label={component.name}
+        anchor={historyAnchor}
+        timezone={timezone}
+        scopeId={`component:${component.id}`}
+        selected={selectedHistory}
+        onSelect={onSelectHistory}
+      />
     </div>
   );
 }
 
-function GroupRow({ group, historyAnchor, timezone }: { group: StatusGroup; historyAnchor: string; timezone: string }) {
+function GroupRow({
+  group,
+  historyAnchor,
+  timezone,
+  selectedHistory,
+  onSelectHistory,
+}: {
+  group: StatusGroup;
+  historyAnchor: string;
+  timezone: string;
+  selectedHistory: HistoryTooltipSelection;
+  onSelectHistory: (next: HistoryTooltipSelection) => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <section className={`group-row${open ? " group-open" : ""}`}>
@@ -234,14 +293,29 @@ function GroupRow({ group, historyAnchor, timezone }: { group: StatusGroup; hist
           </span>
         </span>
         <span className="group-uptime">
-          {formatUptime(group.uptimePercent)} <small>uptime</small>
+          {formatUptime(group.uptimePercent)} <small>可用率</small>
         </span>
       </button>
-      <HistoryBars history={group.dailyHistory} label={group.name} anchor={historyAnchor} timezone={timezone} />
+      <HistoryBars
+        history={group.dailyHistory}
+        label={group.name}
+        anchor={historyAnchor}
+        timezone={timezone}
+        scopeId={`group:${group.id}`}
+        selected={selectedHistory}
+        onSelect={onSelectHistory}
+      />
       {open ? (
         <div className="component-list">
           {group.components.map((component) => (
-            <ComponentRow key={component.id} component={component} historyAnchor={historyAnchor} timezone={timezone} />
+            <ComponentRow
+              key={component.id}
+              component={component}
+              historyAnchor={historyAnchor}
+              timezone={timezone}
+              selectedHistory={selectedHistory}
+              onSelectHistory={onSelectHistory}
+            />
           ))}
         </div>
       ) : null}
@@ -270,6 +344,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   const [periodOffset, setPeriodOffset] = useState(0);
   const [displayGroups, setDisplayGroups] = useState(initialStatus.groups);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedHistory, setSelectedHistory] = useState<HistoryTooltipSelection>(null);
   const copy = statusCopy[initialStatus.overallStatus];
   const visibleGroups = periodOffset === 0 ? initialStatus.groups : displayGroups;
   const period = useMemo(
@@ -284,6 +359,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
     && previousPeriod.to >= initialStatus.historyAvailableFrom;
 
   async function changePeriod(nextOffset: number) {
+    setSelectedHistory(null);
     setPeriodOffset(nextOffset);
     if (nextOffset === 0) {
       return;
@@ -347,6 +423,31 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
       setHistoryLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!selectedHistory) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedHistory(null);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        setSelectedHistory(null);
+        return;
+      }
+      if (!target.closest(".history-bar[aria-expanded='true']")) {
+        setSelectedHistory(null);
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [selectedHistory]);
 
   useEffect(() => {
     const poll = window.setInterval(() => router.refresh(), 30_000);
@@ -420,7 +521,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         <section className="incidents-section" aria-labelledby="active-incidents-title">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Incidents</p>
+              <p className="eyebrow">事件</p>
               <h2 id="active-incidents-title">进行中的事件</h2>
             </div>
           </div>
@@ -438,7 +539,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
 
       <section className="status-card" aria-labelledby="system-status-title">
         <div className="status-card-header">
-          <h2 id="system-status-title">System status</h2>
+          <h2 id="system-status-title">系统状态</h2>
           <div className="period-control" aria-label="历史周期">
             <button
               type="button"
@@ -460,7 +561,14 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         <div className="groups-list">
           {visibleGroups.length ? (
             visibleGroups.map((group) => (
-              <GroupRow key={group.id} group={group} historyAnchor={period.to} timezone={initialStatus.statusPage.timezone} />
+              <GroupRow
+                key={group.id}
+                group={group}
+                historyAnchor={period.to}
+                timezone={initialStatus.statusPage.timezone}
+                selectedHistory={selectedHistory}
+                onSelectHistory={setSelectedHistory}
+              />
             ))
           ) : (
             <div className="empty-state">
