@@ -158,7 +158,7 @@ function unavailablePayload(): PublicStatusPayload {
   return {
     statusPage: {
       id: "unavailable",
-      name: "System Status",
+      name: "系统状态",
       description: "服务可用性与运行事件",
       timezone: "Asia/Shanghai",
     },
@@ -189,7 +189,7 @@ export async function getPublicStatus(): Promise<PublicStatusPayload> {
     return {
       statusPage: {
         id: String(statusPage.id ?? "default"),
-        name: String(statusPage.name ?? "System Status"),
+        name: String(statusPage.name ?? "系统状态"),
         description: statusPage.description ? String(statusPage.description) : null,
         timezone: String(statusPage.timezone ?? "Asia/Shanghai"),
       },

@@ -23,10 +23,10 @@ test("server-renders the public status surface without fabricated data", async (
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /System Status/i);
-  assert.match(html, /System status/i);
+  assert.match(html, /系统状态/);
   assert.match(html, /等待控制面数据|尚未发布组件/);
   assert.match(html, /不会使用虚构状态/);
+  assert.doesNotMatch(html, /\bSystem status\b/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
@@ -59,7 +59,7 @@ test("exposes a dynamic nonce readiness route instead of a cacheable homepage ch
   assert.equal(invalid.status, 422);
 });
 
-test("history bars expose click, hover and keyboard-accessible date details", async () => {
+test("history bars expose exclusive click, hover and keyboard-accessible date details", async () => {
   const source = await readFile(new URL("../app/components/StatusDashboard.tsx", import.meta.url), "utf8");
   assert.match(source, /className="history-tooltip" role="tooltip"/);
   assert.match(source, /statusPeriods: normalizeHistoryPeriods/);
@@ -67,10 +67,20 @@ test("history bars expose click, hover and keyboard-accessible date details", as
   assert.match(source, /持续 \{formatDuration\(period\.durationSeconds\)\}/);
   assert.match(source, /isGenericRecoveryMessage\(period\.incidentMessage\)/);
   assert.match(source, /period\.ongoing \|\| !period\.endedAt/);
-  assert.match(source, /onClick=\{\(\) => setSelectedIndex/);
+  assert.match(source, /type HistoryTooltipSelection/);
+  assert.match(source, /selectedHistory/);
+  assert.match(source, /onSelect\(\{ scopeId, index \}\)/);
+  assert.match(source, /event\.key === "Escape"/);
+  assert.match(source, /pointerdown/);
+  assert.match(source, /history-bar\[aria-expanded='true'\]/);
   assert.match(source, /onMouseEnter=\{\(\) => setPreviewIndex/);
   assert.match(source, /onFocus=\{\(\) => setPreviewIndex/);
   assert.match(source, /aria-label=\{detailLabel\}/);
+  assert.match(source, /% 可用率/);
+  assert.match(source, /<small>可用率<\/small>/);
+  assert.match(source, /系统状态/);
+  assert.doesNotMatch(source, /System status/);
+  assert.doesNotMatch(source, /<small>uptime<\/small>/);
 
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /\.history-tooltip-period \+ \.history-tooltip-period\s*\{[^}]*border-top:/);
