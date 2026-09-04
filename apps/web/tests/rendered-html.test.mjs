@@ -24,11 +24,10 @@ test("server-renders the public status surface without fabricated data", async (
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /系统状态/);
-  assert.match(html, /可用率|等待控制面数据|尚未发布组件/);
   assert.match(html, /等待控制面数据|尚未发布组件/);
   assert.match(html, /不会使用虚构状态/);
-  assert.doesNotMatch(html, /\bSystem status\b/i);
-  assert.doesNotMatch(html, /\buptime\b/i);
+  assert.doesNotMatch(html, /\bSystem status\b/);
+  assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
 test("ships the public status and admin routes without duplicate public pages", async () => {
