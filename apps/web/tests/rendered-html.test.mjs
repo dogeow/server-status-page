@@ -115,8 +115,10 @@ test("mobile status layout keeps the hero compact and all 90 bars inside the car
   assert.match(mobile, /\.history-bars\s*\{[\s\S]*?min-width: 0/);
   assert.match(mobile, /grid-template-columns: repeat\(90, minmax\(0, 1fr\)\)/);
   assert.match(mobile, /\.status-card\s*\{[^}]*margin-top: 18px/);
-  assert.match(mobile, /\.history-bar:nth-child\(-n \+ 25\) \.history-tooltip/);
-  assert.match(mobile, /\.history-bar:nth-last-child\(-n \+ 25\) \.history-tooltip/);
+  assert.match(css, /\.history-bars > \.history-tooltip\s*\{[^}]*position: static/);
+  assert.match(css, /\.history-bars > \.history-tooltip\s*\{[^}]*white-space: normal/);
+  assert.match(mobile, /\.legend\s*\{[^}]*display: flex/);
+  assert.doesNotMatch(mobile, /\.legend\s*\{[^}]*display:\s*none/);
 });
 
 test("desktop public layout uses the same narrow column width as the reference status page", async () => {

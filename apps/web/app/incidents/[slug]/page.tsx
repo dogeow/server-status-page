@@ -18,21 +18,45 @@ function format(value: string) {
   }
 }
 
+const phaseLabel: Record<string, string> = {
+  investigating: "调查中",
+  identified: "已定位",
+  monitoring: "监控恢复中",
+  resolved: "已恢复",
+};
+
+function phaseText(value: string) {
+  return phaseLabel[value] ?? "处理中";
+}
+
 export default async function IncidentPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const [status, incident] = await Promise.all([getPublicStatus(), getIncident(slug)]);
-  if (!incident) notFound();
+  const [status, lookup] = await Promise.all([getPublicStatus(), getIncident(slug)]);
+  if (lookup.state === "missing") notFound();
+  if (lookup.state === "unavailable") {
+    return (
+      <main className="site-shell">
+        <SiteHeader siteName={status.statusPage.name} />
+        <article className="timeline-card">
+          <strong>事件暂时无法读取</strong>
+          <p>控制面暂时没有返回这条事件，请稍后再试。</p>
+        </article>
+        <div className="history-action"><Link className="secondary-button" href="/">返回状态页</Link></div>
+      </main>
+    );
+  }
+  const incident = lookup.incident;
 
   return (
     <main className="site-shell">
       <SiteHeader siteName={status.statusPage.name} />
       <header className="page-heading incident-detail-head">
         <div>
-          <p className="eyebrow">Incident</p>
+          <p className="eyebrow">事件</p>
           <h1>{incident.title}</h1>
           <p>{incident.componentNames.length ? `受影响组件：${incident.componentNames.join("、")}` : "事件详情与进展记录"}</p>
         </div>
-        <span className="status-pill">{incident.phase}</span>
+        <span className="status-pill">{phaseText(incident.phase)}</span>
       </header>
       <article className="timeline-card">
         <strong>{incident.resolvedAt ? "事件已恢复" : "事件处理中"}</strong>
@@ -46,7 +70,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ slug:
           }]).map((update) => (
             <li className="timeline-item" key={update.id}>
               <time>{format(update.createdAt)}</time>
-              <h3>{update.status}</h3>
+              <h3>{phaseText(update.status)}</h3>
               <p>{update.message}</p>
             </li>
           ))}

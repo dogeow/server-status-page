@@ -28,7 +28,7 @@ class NotificationOutboxTest extends TestCase
         $broadcasting = \Mockery::mock(BroadcastingFactory::class);
         $broadcasting->shouldReceive('queue')->once()->andThrow(new \RuntimeException('Reverb unavailable'));
         $this->app->instance(BroadcastingFactory::class, $broadcasting);
-        Http::fake(['https://hooks.example.test/*' => Http::response(['ok' => true])]);
+        Http::fake(['https://93.184.216.34/*' => Http::response(['ok' => true])]);
         $page = StatusPage::query()->create(['name' => 'Status', 'slug' => 'main']);
         $group = ComponentGroup::query()->create(['status_page_id' => $page->id, 'name' => 'API', 'slug' => 'api']);
         $component = Component::query()->create(['component_group_id' => $group->id, 'name' => 'Web', 'slug' => 'web']);
@@ -38,7 +38,7 @@ class NotificationOutboxTest extends TestCase
             'status_page_id' => $page->id,
             'name' => 'Ops webhook',
             'type' => 'webhook',
-            'config' => ['url' => 'https://hooks.example.test/status', 'secret' => 'webhook-secret'],
+            'config' => ['url' => 'https://93.184.216.34/status', 'secret' => 'webhook-secret'],
         ]);
         NotificationPolicy::query()->create([
             'status_page_id' => $page->id,
@@ -62,7 +62,7 @@ class NotificationOutboxTest extends TestCase
             $delivery = $request->header('X-Status-Delivery')[0] ?? '';
             $payload = $request->data();
 
-            return $request->url() === 'https://hooks.example.test/status'
+            return $request->url() === 'https://93.184.216.34/status'
                 && $delivery !== ''
                 && $payload['delivery_id'] === $delivery
                 && $payload['event_type'] === 'incident.created'

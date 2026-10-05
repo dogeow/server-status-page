@@ -91,6 +91,9 @@ func runReverb(ctx context.Context, raw json.RawMessage, connectTimeout time.Dur
 		if response != nil && (response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
 			return Outcome{Status: model.StatusAuthError, ErrorCode: "reverb_authentication_failed", Message: "Reverb websocket authentication failed"}
 		}
+		if response != nil && (response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusServiceUnavailable) {
+			return Outcome{Status: model.StatusUnknown, ErrorCode: "reverb_temporarily_unavailable", Message: "Reverb was rate limited or unavailable"}
+		}
 		return fromError(ctx, "reverb_connect_failed", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "probe complete")
@@ -127,6 +130,9 @@ func runReverb(ctx context.Context, raw json.RawMessage, connectTimeout time.Dur
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return Outcome{Status: model.StatusAuthError, ErrorCode: "reverb_trigger_authentication_failed", Message: "Reverb trigger authentication failed"}
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		return Outcome{Status: model.StatusUnknown, ErrorCode: "reverb_temporarily_unavailable", Message: "Reverb trigger was rate limited or unavailable"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Outcome{Status: model.StatusFailed, ErrorCode: "reverb_trigger_failed", Message: "Reverb trigger returned a non-success status"}

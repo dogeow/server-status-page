@@ -5,13 +5,13 @@ namespace App\Services;
 use App\Enums\ComponentStatus;
 use App\Models\Agent;
 use App\Models\Component;
-use App\Models\MaintenanceWindow;
 use App\Models\OutboxEvent;
-use App\Models\StatusInterval;
 use Illuminate\Support\Facades\DB;
 
 class AgentStatusService
 {
+    public function __construct(private readonly StateEvaluator $evaluator) {}
+
     public function markStaleAgents(): int
     {
         $cutoff = now()->subSeconds((int) config('status.agent_offline_after_seconds', 180));
@@ -39,7 +39,7 @@ class AgentStatusService
                         'consecutive_failures' => 0,
                         'consecutive_successes' => 0,
                     ]);
-                    $this->aggregateComponent($component);
+                    $this->evaluator->reconcile($component, now());
                 }
                 $pageIds = $components->pluck('group.status_page_id')->filter()->unique();
                 foreach ($pageIds as $pageId) {
@@ -61,46 +61,5 @@ class AgentStatusService
         }
 
         return $marked;
-    }
-
-    private function aggregateComponent(Component $component): void
-    {
-        $statuses = $component->monitors()->where('enabled', true)->pluck('status');
-        $maintenance = MaintenanceWindow::query()
-            ->where('starts_at', '<=', now())
-            ->where('ends_at', '>=', now())
-            ->whereNotIn('status', ['cancelled', 'completed'])
-            ->whereHas('components', fn ($query) => $query->where('components.id', $component->id))
-            ->exists();
-        $next = match (true) {
-            $maintenance => ComponentStatus::Maintenance->value,
-            $statuses->isEmpty() || $statuses->every(fn (string $status) => $status === ComponentStatus::Unknown->value) => ComponentStatus::Unknown->value,
-            $statuses->contains(ComponentStatus::MajorOutage->value) && $statuses->contains(ComponentStatus::Operational->value) => ComponentStatus::PartialOutage->value,
-            $statuses->contains(ComponentStatus::MajorOutage->value) => ComponentStatus::MajorOutage->value,
-            $statuses->contains(ComponentStatus::PartialOutage->value) => ComponentStatus::PartialOutage->value,
-            $statuses->contains(ComponentStatus::Degraded->value) => ComponentStatus::Degraded->value,
-            default => ComponentStatus::Operational->value,
-        };
-
-        if ($component->status === $next) {
-            return;
-        }
-        $previous = $component->status;
-        StatusInterval::query()->where('component_id', $component->id)->whereNull('ended_at')->update(['ended_at' => now()]);
-        $component->update(['status' => $next, 'status_changed_at' => now()]);
-        StatusInterval::query()->create(['component_id' => $component->id, 'status' => $next, 'started_at' => now(), 'is_maintenance' => $maintenance]);
-        OutboxEvent::query()->create([
-            'type' => 'component.status_changed',
-            'aggregate_type' => 'component',
-            'aggregate_id' => (string) $component->id,
-            'payload' => [
-                'component_id' => $component->id,
-                'status_page_id' => $component->group->status_page_id,
-                'from' => $previous,
-                'to' => $next,
-                'at' => now()->toIso8601String(),
-            ],
-            'available_at' => now(),
-        ]);
     }
 }

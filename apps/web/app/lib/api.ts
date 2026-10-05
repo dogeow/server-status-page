@@ -214,17 +214,23 @@ export async function getPublicStatus(): Promise<PublicStatusPayload> {
   }
 }
 
-export async function getIncident(slug: string): Promise<Incident | null> {
+export type IncidentLookup =
+  | { state: "found"; incident: Incident }
+  | { state: "missing" }
+  | { state: "unavailable" };
+
+export async function getIncident(slug: string): Promise<IncidentLookup> {
   try {
     const response = await fetch(`${API_BASE}/api/public/v1/incidents/${slug}`, {
       headers: { Accept: "application/json" },
       next: { revalidate: 15 },
       signal: AbortSignal.timeout(4500),
     });
-    if (!response.ok) return null;
+    if (response.status === 404) return { state: "missing" };
+    if (!response.ok) return { state: "unavailable" };
     const json = (await response.json()) as Record<string, unknown>;
-    return normalizeIncident(json.data ?? json.incident ?? json, 0);
+    return { state: "found", incident: normalizeIncident(json.data ?? json.incident ?? json, 0) };
   } catch {
-    return null;
+    return { state: "unavailable" };
   }
 }

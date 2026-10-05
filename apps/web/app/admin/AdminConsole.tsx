@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ThemeToggle } from "../components/ThemeToggle";
 
@@ -89,6 +89,39 @@ async function apiFetch(path: string, init: RequestInit = {}) {
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) throw new Error(String(payload.message ?? "请求失败"));
   return payload;
+}
+
+type PageMeta = { current: number; last: number; total: number };
+
+function pageMetaFrom(payload: Record<string, unknown>, rowCount: number): PageMeta {
+  return {
+    current: Math.max(1, Number(payload.current_page ?? 1) || 1),
+    last: Math.max(1, Number(payload.last_page ?? 1) || 1),
+    total: Math.max(0, Number(payload.total ?? rowCount) || 0),
+  };
+}
+
+function wallTimeToIso(value: string, timeZone = "Asia/Shanghai") {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!match) return new Date(value).toISOString();
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date(utcGuess));
+  const part = (type: string) => Number(parts.find((item) => item.type === type)?.value ?? "0");
+  const zoned = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour") % 24, part("minute"));
+  return new Date(utcGuess + (utcGuess - zoned)).toISOString();
 }
 
 function rowsFrom(payload: Record<string, unknown>): Resource[] {
@@ -346,27 +379,37 @@ function StatusCell({ value }: { value: unknown }) {
   return <><span className={`mini-status status-${statusClass(value)}`} />{statusLabel(value)}</>;
 }
 
-function SpecializedTable({ rows, section }: { rows: Resource[]; section: Section }) {
+type TableActions = {
+  canWrite: boolean;
+  pendingId: string;
+  onResolveIncident: (row: Resource) => void;
+  onToggleMonitor: (row: Resource) => void;
+  onEditComponent: (row: Resource) => void;
+};
+
+function SpecializedTable({ rows, section, actions }: { rows: Resource[]; section: Section; actions?: TableActions }) {
   if (section === "components") {
     return <div style={{ overflowX: "auto" }}><table className="resource-table">
-      <thead><tr><th>公开组件</th><th>当前状态</th><th>所属分组</th><th>状态更新时间</th></tr></thead>
+      <thead><tr><th>公开组件</th><th>当前状态</th><th>所属分组</th><th>状态更新时间</th>{actions?.canWrite ? <th>操作</th> : null}</tr></thead>
       <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>
         <td><span className="resource-name">{resourceLabel(row)}</span>{row.description ? <div className="resource-sub">{String(row.description)}</div> : null}</td>
         <td><StatusCell value={rowStatus(row)} /></td>
         <td>组件组 #{String(row.component_group_id ?? "—")}</td>
         <td><time dateTime={String(row.status_changed_at ?? row.updated_at ?? "")}>{formatAdminDate(row.status_changed_at ?? row.updated_at)}</time></td>
+        {actions?.canWrite ? <td><button className="secondary-button row-action" type="button" disabled={actions.pendingId === String(row.id ?? "")} onClick={() => actions.onEditComponent(row)}>编辑</button></td> : null}
       </tr>)}</tbody>
     </table></div>;
   }
   if (section === "monitors") {
     return <div style={{ overflowX: "auto" }}><table className="resource-table">
-      <thead><tr><th>监控探针</th><th>类型</th><th>状态</th><th>频率</th><th>最近检查</th></tr></thead>
+      <thead><tr><th>监控探针</th><th>类型</th><th>状态</th><th>频率</th><th>最近检查</th>{actions?.canWrite ? <th>操作</th> : null}</tr></thead>
       <tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>
         <td><span className="resource-name">{resourceLabel(row)}</span><div className="resource-sub">状态组件 #{String(row.component_id ?? "—")}</div></td>
         <td>{monitorTypeLabel(row.type)}</td>
         <td><StatusCell value={row.enabled === false ? "disabled" : rowStatus(row)} /></td>
         <td>{row.interval_seconds ? `${String(row.interval_seconds)} 秒` : "—"}</td>
         <td><time dateTime={String(row.last_checked_at ?? row.updated_at ?? "")}>{formatAdminDate(row.last_checked_at ?? row.updated_at)}</time></td>
+        {actions?.canWrite ? <td><button className="secondary-button row-action" type="button" disabled={actions.pendingId === String(row.id ?? "")} onClick={() => actions.onToggleMonitor(row)}>{row.enabled === false ? "启用" : "停用"}</button></td> : null}
       </tr>)}</tbody>
     </table></div>;
   }
@@ -406,14 +449,15 @@ function SpecializedTable({ rows, section }: { rows: Resource[]; section: Sectio
   return null;
 }
 
-function ResourceTable({ rows, section }: { rows: Resource[]; section: Section }) {
-  if (!rows.length) return <div className="admin-empty">暂无记录。创建后会从真实控制面数据自动更新。</div>;
+function ResourceTable({ rows, section, actions, loading = false }: { rows: Resource[]; section: Section; actions?: TableActions; loading?: boolean }) {
+  if (!rows.length) return <div className="admin-empty">{loading ? "读取中…" : "暂无记录。创建后会从真实控制面数据自动更新。"}</div>;
   if (section === "audit") return <AuditTable rows={rows} />;
-  if (["components", "monitors", "agents", "integrations", "users"].includes(section)) return <SpecializedTable rows={rows} section={section} />;
+  if (["components", "monitors", "agents", "integrations", "users"].includes(section)) return <SpecializedTable rows={rows} section={section} actions={actions} />;
+  const showIncidentAction = section === "incidents" && Boolean(actions?.canWrite);
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="resource-table">
-        <thead><tr><th>名称</th><th>状态</th><th>更新时间</th></tr></thead>
+        <thead><tr><th>名称</th><th>状态</th><th>更新时间</th>{showIncidentAction ? <th>操作</th> : null}</tr></thead>
         <tbody>
           {rows.map((row, index) => (
             <tr key={String(row.id ?? index)}>
@@ -425,6 +469,7 @@ function ResourceTable({ rows, section }: { rows: Resource[]; section: Section }
                 <StatusCell value={rowStatus(row)} />
               </td>
               <td><time dateTime={String(row.updated_at ?? row.last_seen_at ?? row.created_at ?? "")}>{formatAdminDate(row.updated_at ?? row.last_seen_at ?? row.created_at)}</time></td>
+              {showIncidentAction ? <td>{String(row.status ?? "") === "resolved" ? "—" : <button className="secondary-button row-action" type="button" disabled={actions?.pendingId === String(row.id ?? "")} onClick={() => actions?.onResolveIncident(row)}>标记已恢复</button>}</td> : null}
             </tr>
           ))}
         </tbody>
@@ -451,7 +496,7 @@ function Field({ label, name, type = "text", required = false, children, help, d
   );
 }
 
-function CreateForm({ section, onCreated, onClose }: { section: Section; onCreated: (message?: string) => void; onClose: () => void }) {
+function CreateForm({ section, onCreated, onClose, onSecret }: { section: Section; onCreated: (message?: string) => void; onClose: () => void; onSecret: (secret: string) => void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [secret, setSecret] = useState("");
@@ -539,8 +584,8 @@ function CreateForm({ section, onCreated, onClose }: { section: Section; onCreat
         name: data.title,
         message: data.message || null,
         status: "scheduled",
-        starts_at: new Date(String(data.starts_at)).toISOString(),
-        ends_at: new Date(String(data.ends_at)).toISOString(),
+        starts_at: wallTimeToIso(String(data.starts_at)),
+        ends_at: wallTimeToIso(String(data.ends_at)),
         exclude_from_uptime: true,
         component_ids: String(data.component_ids || "").split(",").map((value) => Number(value.trim())).filter(Boolean),
       };
@@ -592,7 +637,9 @@ function CreateForm({ section, onCreated, onClose }: { section: Section; onCreat
         const environment = environmentSource && typeof environmentSource === "object"
           ? Object.entries(environmentSource as Record<string, unknown>).map(([key, value]) => `${key}=${String(value)}`).join("\n")
           : "";
-        setSecret(environment || String(issuedSecret));
+        const shown = environment || String(issuedSecret);
+        setSecret(shown);
+        onSecret(shown);
         setSaving(false);
       } else {
         onCreated(String(payload.message ?? "已创建"));
@@ -608,7 +655,10 @@ function CreateForm({ section, onCreated, onClose }: { section: Section; onCreat
       <div>
         <p>该凭据只显示一次，请立即保存到目标服务或 Agent 的安全环境变量中。</p>
         <div className="field"><label>一次性凭据 / 环境变量</label><textarea readOnly value={secret} /></div>
-        <div className="form-actions"><button className="primary-button" type="button" onClick={() => onCreated("凭据已创建并显示一次")}>完成</button></div>
+        <div className="form-actions">
+          <button className="secondary-button" type="button" onClick={() => void navigator.clipboard.writeText(secret)}>复制</button>
+          <button className="primary-button" type="button" onClick={() => onCreated("凭据已创建并显示一次")}>完成</button>
+        </div>
       </div>
     );
   }
@@ -686,8 +736,8 @@ function CreateForm({ section, onCreated, onClose }: { section: Section; onCreat
         {section === "maintenance" ? <>
           <Field label="维护标题" name="title" required />
           <Field label="状态页 ID" name="status_page_id" required />
-          <Field label="开始时间" name="starts_at" type="datetime-local" required />
-          <Field label="结束时间" name="ends_at" type="datetime-local" required />
+          <Field label="开始时间" name="starts_at" type="datetime-local" required help="按状态页时区 Asia/Shanghai 解释。" />
+          <Field label="结束时间" name="ends_at" type="datetime-local" required help="按状态页时区 Asia/Shanghai 解释。" />
           <Field label="公开说明" name="message" />
           <Field label="受影响组件 ID" name="component_ids" />
         </> : null}
@@ -728,32 +778,104 @@ function CreateForm({ section, onCreated, onClose }: { section: Section; onCreat
   );
 }
 
+function ComponentEditForm({ row, onSaved, onClose }: { row: Resource; onSaved: (message: string) => void; onClose: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (row.id == null) return;
+    setSaving(true);
+    setError("");
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    try {
+      await apiFetch(`components/${row.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: data.name, description: data.description ? String(data.description) : null }),
+      });
+      onSaved("组件已更新");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "保存失败");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <div className="form-grid">
+        <Field label="组件名称" name="name" required defaultValue={String(row.name ?? "")} />
+        <Field label="说明" name="description" defaultValue={String(row.description ?? "")} />
+      </div>
+      <div className="form-actions">
+        <button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存"}</button>
+        <button className="secondary-button" type="button" onClick={onClose}>取消</button>
+        {error ? <span className="form-message error">{error}</span> : null}
+      </div>
+    </form>
+  );
+}
+
 export function AdminConsole() {
   const [section, setSection] = useState<Section>("overview");
+  const [page, setPage] = useState(1);
+  const [pageMeta, setPageMeta] = useState<PageMeta>({ current: 1, last: 1, total: 0 });
   const [rows, setRows] = useState<Resource[]>([]);
   const [overview, setOverview] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drawer, setDrawer] = useState(false);
   const [notice, setNotice] = useState("");
+  const [role, setRole] = useState("");
+  const [holdingSecret, setHoldingSecret] = useState(false);
+  const [componentEdit, setComponentEdit] = useState<Resource | null>(null);
+  const [pendingId, setPendingId] = useState("");
+  const requestSeq = useRef(0);
+  const loadedKey = useRef("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void apiFetch("me").then((payload) => {
+      const user = payload.user;
+      const roleName = user && typeof user === "object" ? String((user as Resource).role ?? "") : "";
+      if (!cancelled) setRole(roleName);
+    }).catch(() => {
+      if (!cancelled) setRole("");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(async () => {
+    const seq = ++requestSeq.current;
+    const key = `${section}:${page}`;
+    const switched = loadedKey.current !== key;
+    loadedKey.current = key;
+    if (switched && section !== "overview") {
+      setRows([]);
+      setPageMeta({ current: page, last: 1, total: 0 });
+    }
     setLoading(true);
     setError("");
     try {
       if (section === "overview") {
         const payload = await apiFetch("overview");
+        if (seq !== requestSeq.current) return;
         setOverview((payload.data ?? payload) as Record<string, unknown>);
       } else {
-        const payload = await apiFetch(endpoint[section]);
-        setRows(rowsFrom(payload));
+        const payload = await apiFetch(`${endpoint[section]}?page=${page}`);
+        if (seq !== requestSeq.current) return;
+        const nextRows = rowsFrom(payload);
+        setRows(nextRows);
+        setPageMeta(pageMetaFrom(payload, nextRows.length));
       }
     } catch (reason) {
+      if (seq !== requestSeq.current) return;
       setError(reason instanceof Error ? reason.message : "无法读取控制面数据");
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
-  }, [section]);
+  }, [section, page]);
 
   useEffect(() => {
     const initial = window.setTimeout(() => void load(), 0);
@@ -779,12 +901,62 @@ export function AdminConsole() {
     ];
   }, [overview]);
 
-  const canCreate = !["overview", "audit"].includes(section);
+  const canWrite = role === "owner" || role === "admin";
+  const canCreate = canWrite && !["overview", "audit"].includes(section) && (section !== "users" || role === "owner");
+  const tableActions: TableActions = {
+    canWrite,
+    pendingId,
+    onResolveIncident: (row) => {
+      if (row.id == null) return;
+      void mutate(`incidents/${row.id}`, { status: "resolved", resolved_at: new Date().toISOString() }, String(row.id), "事件已标记为恢复");
+    },
+    onToggleMonitor: (row) => {
+      if (row.id == null) return;
+      const enabled = row.enabled === false;
+      void mutate(`monitors/${row.id}`, { enabled }, String(row.id), enabled ? "监控已启用" : "监控已停用");
+    },
+    onEditComponent: (row) => {
+      setHoldingSecret(false);
+      setComponentEdit(row);
+      setDrawer(true);
+    },
+  };
 
   function changeSection(next: Section) {
     setSection(next);
+    setPage(1);
     setDrawer(false);
+    setHoldingSecret(false);
+    setComponentEdit(null);
     setNotice("");
+  }
+
+  function closeDrawer() {
+    if (holdingSecret) return;
+    setDrawer(false);
+    setComponentEdit(null);
+  }
+
+  async function logout() {
+    try {
+      await apiFetch("logout", { method: "POST" });
+    } finally {
+      window.location.assign("/admin/login");
+    }
+  }
+
+  async function mutate(path: string, body: Record<string, unknown>, id: string, message: string) {
+    setPendingId(id);
+    setError("");
+    try {
+      await apiFetch(path, { method: "PATCH", body: JSON.stringify(body) });
+      setNotice(message);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "保存失败");
+    } finally {
+      setPendingId("");
+    }
   }
 
   return (
@@ -803,7 +975,8 @@ export function AdminConsole() {
               key={item.id}
               aria-current={item.id === section ? "page" : undefined}
             >
-              <span aria-hidden="true">{item.icon}</span>{item.label}
+              <span className="admin-nav-icon" aria-hidden="true">{item.icon}</span>
+              <span className="admin-nav-label">{item.label}</span>
             </a>
           ))}
         </nav>
@@ -816,7 +989,8 @@ export function AdminConsole() {
           <div className="admin-actions">
             <ThemeToggle />
             <button className="secondary-button" type="button" onClick={() => void load()}>刷新</button>
-            {canCreate ? <button className="primary-button" type="button" onClick={() => setDrawer(true)}>新建</button> : null}
+            <button className="secondary-button" type="button" onClick={() => void logout()}>退出</button>
+            {canCreate ? <button className="primary-button" type="button" onClick={() => { setHoldingSecret(false); setComponentEdit(null); setDrawer(true); }}>新建</button> : null}
           </div>
         </header>
 
@@ -834,7 +1008,7 @@ export function AdminConsole() {
           <div className="admin-grid">
             <article className="admin-card">
               <header className="admin-card-head"><h2>最近检查</h2><button className="secondary-button" type="button" onClick={() => changeSection("monitors")}>查看监控项</button></header>
-              <div className="admin-card-body"><ResourceTable rows={Array.isArray(overview.recent_checks) ? overview.recent_checks as Resource[] : []} section="overview" /></div>
+              <div className="admin-card-body"><ResourceTable rows={Array.isArray(overview.recent_checks) ? overview.recent_checks as Resource[] : []} section="overview" actions={tableActions} /></div>
             </article>
             <article className="admin-card">
               <header className="admin-card-head"><h2>系统动态</h2></header>
@@ -845,17 +1019,30 @@ export function AdminConsole() {
           </div>
         </> : (
           <article className="admin-card">
-            <header className="admin-card-head"><h2>{title[section]}列表</h2><span className="form-message">{loading ? "读取中…" : `${rows.length} 条记录`}</span></header>
-            <div className="admin-card-body"><ResourceTable rows={rows} section={section} /></div>
+            <header className="admin-card-head"><h2>{title[section]}列表</h2><span className="form-message">{loading && rows.length === 0 ? "读取中…" : `${pageMeta.total || rows.length} 条记录`}</span></header>
+            <div className="admin-card-body">
+              <ResourceTable rows={rows} section={section} actions={tableActions} loading={loading} />
+              {page > 1 || pageMeta.last > 1 ? (
+                <div className="admin-pager">
+                  <button className="secondary-button row-action" type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>上一页</button>
+                  <span>第 {pageMeta.current} / {pageMeta.last} 页</span>
+                  <button className="secondary-button row-action" type="button" disabled={page >= pageMeta.last || loading} onClick={() => setPage((current) => current + 1)}>下一页</button>
+                </div>
+              ) : null}
+            </div>
           </article>
         )}
       </section>
 
       {drawer ? (
-        <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDrawer(false); }}>
-          <aside className="drawer" role="dialog" aria-modal="true" aria-label={`新建${title[section]}`}>
-            <header className="drawer-head"><div><p className="eyebrow">Create</p><h2>新建{title[section]}</h2></div><button className="icon-button" type="button" onClick={() => setDrawer(false)} aria-label="关闭">×</button></header>
-            <CreateForm section={section} onClose={() => setDrawer(false)} onCreated={(message) => { setDrawer(false); setNotice(message || "已创建"); void load(); }} />
+        <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => { if (holdingSecret) return; if (event.target === event.currentTarget) closeDrawer(); }}>
+          <aside className="drawer" role="dialog" aria-modal="true" aria-label={componentEdit ? "编辑状态组件" : `新建${title[section]}`}>
+            <header className="drawer-head"><div><p className="eyebrow">{componentEdit ? "Edit" : "Create"}</p><h2>{componentEdit ? "编辑状态组件" : `新建${title[section]}`}</h2></div><button className="icon-button" type="button" onClick={closeDrawer} aria-label="关闭" disabled={holdingSecret}>×</button></header>
+            {componentEdit ? (
+              <ComponentEditForm key={String(componentEdit.id)} row={componentEdit} onClose={closeDrawer} onSaved={(message) => { setDrawer(false); setComponentEdit(null); setNotice(message); void load(); }} />
+            ) : (
+              <CreateForm section={section} onSecret={() => setHoldingSecret(true)} onClose={closeDrawer} onCreated={(message) => { setDrawer(false); setHoldingSecret(false); setNotice(message || "已创建"); void load(); }} />
+            )}
           </aside>
         </div>
       ) : null}

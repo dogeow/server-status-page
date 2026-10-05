@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Enums\ComponentStatus;
 use App\Models\Incident;
 use App\Models\MaintenanceWindow;
 use App\Models\NotificationDelivery;
 use App\Models\NotificationPolicy;
 use App\Models\OutboxEvent;
 use Carbon\CarbonImmutable;
+use Throwable;
 
 class IncidentReminderService
 {
@@ -18,6 +20,14 @@ class IncidentReminderService
 
         foreach ($incidents as $incident) {
             $componentIds = $incident->components->pluck('id');
+            $actionable = $incident->components->contains(fn ($component) => in_array($component->status, [
+                ComponentStatus::Degraded->value,
+                ComponentStatus::PartialOutage->value,
+                ComponentStatus::MajorOutage->value,
+            ], true));
+            if (! $actionable) {
+                continue;
+            }
             $inMaintenance = MaintenanceWindow::query()
                 ->where('starts_at', '<=', now())
                 ->where('ends_at', '>=', now())
@@ -84,7 +94,11 @@ class IncidentReminderService
         if (! is_array($quiet) || empty($quiet['start']) || empty($quiet['end'])) {
             return false;
         }
-        $now = now((string) ($quiet['timezone'] ?? 'Asia/Shanghai'));
+        try {
+            $now = now((string) ($quiet['timezone'] ?? 'Asia/Shanghai'));
+        } catch (Throwable) {
+            return false;
+        }
         $minutes = $now->hour * 60 + $now->minute;
         [$startHour, $startMinute] = array_pad(array_map('intval', explode(':', (string) $quiet['start'], 2)), 2, 0);
         [$endHour, $endMinute] = array_pad(array_map('intval', explode(':', (string) $quiet['end'], 2)), 2, 0);

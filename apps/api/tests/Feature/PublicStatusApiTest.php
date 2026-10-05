@@ -246,7 +246,6 @@ class PublicStatusApiTest extends TestCase
 
         $response = $this->getJson('/api/public/v1/history?from='.$from->toDateString().'&to='.$to->toDateString())
             ->assertOk()
-            ->assertJsonPath('overall_status', 'operational')
             ->assertJsonCount(31, 'groups.0.daily_history')
             ->assertJsonCount(31, 'groups.0.components.0.daily_history')
             ->assertJsonStructure([
@@ -257,6 +256,11 @@ class PublicStatusApiTest extends TestCase
                 ]],
                 'components', 'incidents',
             ]);
+        $rank = ['operational' => 0, 'unknown' => 1, 'under_maintenance' => 2, 'degraded_performance' => 3, 'partial_outage' => 4, 'major_outage' => 5];
+        $statuses = collect($response->json('groups'))->flatMap(fn (array $group) => collect($group['components'])->pluck('status'))->all();
+        $known = array_values(array_filter($statuses, fn (string $status) => $status !== 'unknown'));
+        $expected = collect($known === [] ? $statuses : $known)->sortByDesc(fn (string $status) => $rank[$status] ?? 1)->first();
+        $this->assertSame($expected, $response->json('overall_status'));
         $this->assertNotNull($response->json('groups.0.uptime_percent'));
         $this->assertNotNull($response->json('groups.0.components.0.uptime_percent'));
         $this->assertStringContainsString('stale-if-error=86400', $response->headers->get('Cache-Control'));

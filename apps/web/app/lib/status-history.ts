@@ -20,25 +20,6 @@ function addUtcDays(value: Date, days: number): Date {
   return date;
 }
 
-function addUtcMonths(value: Date, months: number): Date {
-  const target = new Date(Date.UTC(
-    value.getUTCFullYear(),
-    value.getUTCMonth() + months,
-    1,
-    value.getUTCHours(),
-    value.getUTCMinutes(),
-    value.getUTCSeconds(),
-    value.getUTCMilliseconds(),
-  ));
-  const lastDay = new Date(Date.UTC(
-    target.getUTCFullYear(),
-    target.getUTCMonth() + 1,
-    0,
-  )).getUTCDate();
-  target.setUTCDate(Math.min(value.getUTCDate(), lastDay));
-  return target;
-}
-
 export function utcDateKey(value: string | Date): string {
   const date = parseAnchor(value);
   const year = String(date.getUTCFullYear()).padStart(4, "0");
@@ -67,19 +48,43 @@ export function fillHistory(history: DailyStatus[], anchor: string | Date): Dail
   return [...padding, ...rows];
 }
 
-export function getHistoryPeriod(anchor: string | Date, periodOffset: number) {
-  const anchorDate = parseAnchor(anchor);
-  const end = addUtcMonths(anchorDate, periodOffset * 3);
-  const start = addUtcMonths(anchorDate, periodOffset * 3 - 3);
-  const formatter = new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "UTC",
+function dateKeyInTimeZone(value: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
     year: "numeric",
-    month: "short",
-  });
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function addDaysToKey(key: string, days: number): string {
+  const date = parseDateKey(key) ?? new Date(FALLBACK_ANCHOR.getTime());
+  return utcDateKey(addUtcDays(date, days));
+}
+
+function formatMonthLabel(key: string): string {
+  const [year, month] = key.split("-");
+  return `${year}年${Number(month)}月`;
+}
+
+export function getHistoryPeriod(anchor: string | Date, periodOffset: number, timeZone = "UTC") {
+  const anchorDate = parseAnchor(anchor);
+  let zone = timeZone || "UTC";
+  let endKey: string;
+  try {
+    endKey = dateKeyInTimeZone(anchorDate, zone);
+  } catch {
+    zone = "UTC";
+    endKey = dateKeyInTimeZone(anchorDate, "UTC");
+  }
+  endKey = addDaysToKey(endKey, periodOffset * HISTORY_DAYS);
+  const startKey = addDaysToKey(endKey, -(HISTORY_DAYS - 1));
 
   return {
-    from: utcDateKey(start),
-    to: utcDateKey(end),
-    label: `${formatter.format(start)} – ${formatter.format(end)}`,
+    from: startKey,
+    to: endKey,
+    label: `${formatMonthLabel(startKey)} – ${formatMonthLabel(endKey)}`,
   };
 }

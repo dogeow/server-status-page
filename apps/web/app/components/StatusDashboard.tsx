@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type {
@@ -141,6 +141,7 @@ function HistoryBars({
   history,
   label,
   anchor,
+  rangeLabel,
   timezone,
   scopeId,
   selected,
@@ -151,6 +152,7 @@ function HistoryBars({
   history: DailyStatus[];
   label: string;
   anchor: string;
+  rangeLabel: string;
   timezone: string;
   scopeId: string;
   selected: HistoryTooltipSelection;
@@ -163,8 +165,37 @@ function HistoryBars({
   const active = preview ?? selected;
   const visibleIndex = active?.scopeId === scopeId ? active.index : null;
 
+  const visibleDay = visibleIndex === null ? null : bars[visibleIndex];
+
+  function indexFromPointer(event: { clientX: number; currentTarget: HTMLDivElement }) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    const ratio = (event.clientX - rect.left) / rect.width;
+    return Math.min(bars.length - 1, Math.max(0, Math.floor(ratio * bars.length)));
+  }
+
   return (
-    <div className="history-bars" aria-label={`${label} 最近 90 天状态`}>
+    <div
+      className="history-bars"
+      aria-label={`${label} ${rangeLabel} 状态`}
+      onPointerDown={(event) => {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        if (event.target instanceof Element && event.target.closest(".history-tooltip")) return;
+        const index = indexFromPointer(event);
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onSelect(selected?.scopeId === scopeId && selected.index === index ? null : { scopeId, index });
+      }}
+      onPointerMove={(event) => {
+        if (event.target instanceof Element && event.target.closest(".history-tooltip")) return;
+        if (!event.currentTarget.hasPointerCapture(event.pointerId) && event.pointerType !== "mouse") return;
+        onPreview({ scopeId, index: indexFromPointer(event) });
+      }}
+      onPointerLeave={(event) => {
+        const active = document.activeElement;
+        if (active instanceof Node && event.currentTarget.contains(active)) return;
+        onPreview(null);
+      }}
+    >
       {bars.map((day, index) => {
         const status = historyStatus(day);
         const statusLabel = status === "unknown" && day.uptimePercent == null
@@ -188,7 +219,8 @@ function HistoryBars({
             key={`${day.date}-${index}`}
             aria-label={detailLabel}
             aria-expanded={visibleIndex === index}
-            onClick={() => {
+            onClick={(event) => {
+              if (event.detail !== 0) return;
               if (selected?.scopeId === scopeId && selected.index === index) {
                 onSelect(null);
                 return;
@@ -196,33 +228,40 @@ function HistoryBars({
               onSelect({ scopeId, index });
             }}
             onMouseEnter={() => onPreview({ scopeId, index })}
-            onMouseLeave={() => onPreview(null)}
+            onMouseLeave={(event) => {
+              if (event.currentTarget === document.activeElement) return;
+              onPreview(null);
+            }}
             onFocus={() => onPreview({ scopeId, index })}
             onBlur={() => onPreview(null)}
-          >
-            {visibleIndex === index ? (
-              <span className="history-tooltip" role="tooltip">
-                <strong>{day.date}</strong>
-                <span className="history-tooltip-summary">{statusLabel}{uptimeLabel ? ` · ${uptimeLabel}` : ""}</span>
-                {periods.length ? (
-                  <span className="history-tooltip-periods">
-                    {periods.map((period, periodIndex) => (
-                      <span className="history-tooltip-period" key={`${period.startedAt}-${periodIndex}`}>
-                        <strong>{period.componentName ? `${period.componentName} · ` : ""}{statusCopy[period.status].label}</strong>
-                        <span>{formatStatusPeriod(period, day.date, timezone)} · 持续 {formatDuration(period.durationSeconds)}</span>
-                        {period.incidentTitle ? <span className="history-tooltip-incident">事件：{period.incidentTitle}</span> : null}
-                        {period.incidentMessage && !isGenericRecoveryMessage(period.incidentMessage)
-                          ? <span className="history-tooltip-message">{period.incidentMessage}</span>
-                          : null}
-                      </span>
-                    ))}
-                  </span>
-                ) : null}
-              </span>
-            ) : null}
-          </button>
+          />
         );
       })}
+      {visibleDay ? (
+        <div className="history-tooltip" role="tooltip">
+          <strong>{visibleDay.date}</strong>
+          <span className="history-tooltip-summary">
+            {historyStatus(visibleDay) === "unknown" && visibleDay.uptimePercent == null
+              ? "暂无监控数据"
+              : statusCopy[historyStatus(visibleDay)].label}
+            {visibleDay.uptimePercent == null ? "" : ` · ${visibleDay.uptimePercent.toFixed(2)}% 可用率`}
+          </span>
+          {(visibleDay.statusPeriods ?? []).length ? (
+            <span className="history-tooltip-periods">
+              {(visibleDay.statusPeriods ?? []).map((period, periodIndex) => (
+                <span className="history-tooltip-period" key={`${period.startedAt}-${periodIndex}`}>
+                  <strong>{period.componentName ? `${period.componentName} · ` : ""}{statusCopy[period.status].label}</strong>
+                  <span>{formatStatusPeriod(period, visibleDay.date, timezone)} · 持续 {formatDuration(period.durationSeconds)}</span>
+                  {period.incidentTitle ? <span className="history-tooltip-incident">事件：{period.incidentTitle}</span> : null}
+                  {period.incidentMessage && !isGenericRecoveryMessage(period.incidentMessage)
+                    ? <span className="history-tooltip-message">{period.incidentMessage}</span>
+                    : null}
+                </span>
+              ))}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -230,6 +269,7 @@ function HistoryBars({
 function ComponentRow({
   component,
   historyAnchor,
+  rangeLabel,
   timezone,
   selectedHistory,
   previewHistory,
@@ -238,6 +278,7 @@ function ComponentRow({
 }: {
   component: StatusComponent;
   historyAnchor: string;
+  rangeLabel: string;
   timezone: string;
   selectedHistory: HistoryTooltipSelection;
   previewHistory: HistoryTooltipSelection;
@@ -261,6 +302,7 @@ function ComponentRow({
         history={component.dailyHistory}
         label={component.name}
         anchor={historyAnchor}
+        rangeLabel={rangeLabel}
         timezone={timezone}
         scopeId={`component:${component.id}`}
         selected={selectedHistory}
@@ -275,6 +317,7 @@ function ComponentRow({
 function GroupRow({
   group,
   historyAnchor,
+  rangeLabel,
   timezone,
   selectedHistory,
   previewHistory,
@@ -283,6 +326,7 @@ function GroupRow({
 }: {
   group: StatusGroup;
   historyAnchor: string;
+  rangeLabel: string;
   timezone: string;
   selectedHistory: HistoryTooltipSelection;
   previewHistory: HistoryTooltipSelection;
@@ -314,6 +358,7 @@ function GroupRow({
         history={group.dailyHistory}
         label={group.name}
         anchor={historyAnchor}
+        rangeLabel={rangeLabel}
         timezone={timezone}
         scopeId={`group:${group.id}`}
         selected={selectedHistory}
@@ -328,6 +373,7 @@ function GroupRow({
               key={component.id}
               component={component}
               historyAnchor={historyAnchor}
+              rangeLabel={rangeLabel}
               timezone={timezone}
               selectedHistory={selectedHistory}
               previewHistory={previewHistory}
@@ -362,17 +408,19 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   const [periodOffset, setPeriodOffset] = useState(0);
   const [displayGroups, setDisplayGroups] = useState(initialStatus.groups);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const historyRequest = useRef(0);
   const [selectedHistory, setSelectedHistory] = useState<HistoryTooltipSelection>(null);
   const [previewHistory, setPreviewHistory] = useState<HistoryTooltipSelection>(null);
   const copy = statusCopy[initialStatus.overallStatus];
   const visibleGroups = periodOffset === 0 ? initialStatus.groups : displayGroups;
   const period = useMemo(
-    () => getHistoryPeriod(initialStatus.updatedAt, periodOffset),
-    [initialStatus.updatedAt, periodOffset],
+    () => getHistoryPeriod(initialStatus.updatedAt, periodOffset, initialStatus.statusPage.timezone),
+    [initialStatus.updatedAt, initialStatus.statusPage.timezone, periodOffset],
   );
   const previousPeriod = useMemo(
-    () => getHistoryPeriod(initialStatus.updatedAt, periodOffset - 1),
-    [initialStatus.updatedAt, periodOffset],
+    () => getHistoryPeriod(initialStatus.updatedAt, periodOffset - 1, initialStatus.statusPage.timezone),
+    [initialStatus.updatedAt, initialStatus.statusPage.timezone, periodOffset],
   );
   const canGoPrevious = initialStatus.historyAvailableFrom !== null
     && previousPeriod.to >= initialStatus.historyAvailableFrom;
@@ -388,17 +436,20 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   }
 
   async function changePeriod(nextOffset: number) {
+    const requestId = ++historyRequest.current;
     clearHistoryTooltip();
     setPeriodOffset(nextOffset);
+    setHistoryError("");
     if (nextOffset === 0) {
       return;
     }
-    const nextPeriod = getHistoryPeriod(initialStatus.updatedAt, nextOffset);
+    const nextPeriod = getHistoryPeriod(initialStatus.updatedAt, nextOffset, initialStatus.statusPage.timezone);
     setHistoryLoading(true);
     try {
       const response = await fetch(`/api/public/v1/history?from=${nextPeriod.from}&to=${nextPeriod.to}`, {
         headers: { Accept: "application/json" },
       });
+      if (requestId !== historyRequest.current) return;
       if (!response.ok) throw new Error("history unavailable");
       const payload = await response.json() as Record<string, unknown>;
         const raw = (payload.data ?? payload) as Record<string, unknown>;
@@ -445,11 +496,13 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
               : [],
           } satisfies StatusGroup;
         });
+        if (requestId !== historyRequest.current) return;
         setDisplayGroups(groups);
     } catch {
-      setDisplayGroups([]);
+      if (requestId !== historyRequest.current) return;
+      setHistoryError("历史记录暂时无法读取，仍显示上一份数据。");
     } finally {
-      setHistoryLoading(false);
+      if (requestId === historyRequest.current) setHistoryLoading(false);
     }
   }
 
@@ -470,7 +523,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
         return;
       }
       // Any history bar click owns selection via onClick; only dismiss for true outside presses.
-      if (!target.closest(".history-bar")) {
+      if (!target.closest(".history-bar") && !target.closest(".history-tooltip")) {
         clearHistoryTooltip();
       }
     };
@@ -484,36 +537,47 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
   }, [selectedHistory, previewHistory]);
 
   useEffect(() => {
-    const poll = window.setInterval(() => router.refresh(), 30_000);
-    const wsUrl = process.env.NEXT_PUBLIC_REVERB_WS_URL;
+    let stopped = false;
     let socket: WebSocket | null = null;
-    if (wsUrl) {
+    let retry = 0;
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    const poll = window.setInterval(refreshIfVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    const connect = () => {
+      const wsUrl = process.env.NEXT_PUBLIC_REVERB_WS_URL;
+      if (!wsUrl || stopped) return;
       try {
         socket = new WebSocket(wsUrl);
-        socket.onopen = () => {
-          socket?.send(
-            JSON.stringify({
-              event: "pusher:subscribe",
-              data: { channel: "public-status" },
-            }),
-          );
-        };
-        socket.onmessage = (event) => {
-          try {
-            const payload = JSON.parse(String(event.data)) as { event?: string };
-            if (payload.event?.includes("status") || payload.event?.includes("incident")) {
-              router.refresh();
-            }
-          } catch {
-            // Ignore malformed broadcast frames; polling remains authoritative.
-          }
-        };
       } catch {
-        socket = null;
+        return;
       }
-    }
+      socket.onopen = () => {
+        socket?.send(JSON.stringify({ event: "pusher:subscribe", data: { channel: "public-status" } }));
+      };
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(String(event.data)) as { event?: string };
+          if (payload.event === "pusher:ping") {
+            socket?.send(JSON.stringify({ event: "pusher:pong", data: {} }));
+            return;
+          }
+          if (payload.event?.includes("status") || payload.event?.includes("incident")) refreshIfVisible();
+        } catch {
+          // Ignore malformed broadcast frames; polling remains authoritative.
+        }
+      };
+      socket.onclose = () => {
+        if (!stopped) retry = window.setTimeout(connect, 5_000);
+      };
+    };
+    connect();
     return () => {
+      stopped = true;
       window.clearInterval(poll);
+      window.clearTimeout(retry);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
       socket?.close();
     };
   }, [router]);
@@ -532,22 +596,26 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
           </p>
         </div>
         <div className="last-updated">
-          <span className="live-dot" />
+          <span className={`live-dot live-${initialStatus.overallStatus}`} />
           更新于 {formatDateTime(initialStatus.updatedAt, initialStatus.statusPage.timezone)}
         </div>
       </section>
 
       {initialStatus.maintenances.length ? (
-        <section className="maintenance-strip" aria-label="计划维护">
-          <span className="maintenance-icon" aria-hidden="true">◷</span>
-          <div>
-            <strong>{initialStatus.maintenances[0].title}</strong>
-            <p>
-              {formatDateTime(initialStatus.maintenances[0].startsAt, initialStatus.statusPage.timezone)}
-              {" – "}
-              {formatDateTime(initialStatus.maintenances[0].endsAt, initialStatus.statusPage.timezone)}
-            </p>
-          </div>
+        <section className="maintenance-list" aria-label="计划维护">
+          {initialStatus.maintenances.map((maintenance) => (
+            <div className="maintenance-strip" key={maintenance.id}>
+              <span className="maintenance-icon" aria-hidden="true">◷</span>
+              <div>
+                <strong>{maintenance.title}</strong>
+                <p>
+                  {formatDateTime(maintenance.startsAt, initialStatus.statusPage.timezone)}
+                  {" – "}
+                  {formatDateTime(maintenance.endsAt, initialStatus.statusPage.timezone)}
+                </p>
+              </div>
+            </div>
+          ))}
         </section>
       ) : null}
 
@@ -584,11 +652,14 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
             <span>{period.label}</span>
             <button type="button" onClick={() => void changePeriod(Math.min(0, periodOffset + 1))} disabled={periodOffset >= 0} aria-label="下一周期">›</button>
             {historyLoading ? <span className="history-loading" aria-live="polite">读取中</span> : null}
+            {historyError ? <span className="history-error" role="alert">{historyError}</span> : null}
           </div>
           <div className="legend" aria-label="状态图例">
             <span><i className="status-operational" />正常</span>
             <span><i className="status-degraded" />降级</span>
+            <span><i className="status-partial_outage" />部分中断</span>
             <span><i className="status-major_outage" />中断</span>
+            <span><i className="status-maintenance" />维护</span>
             <span><i className="status-unknown" />暂无数据</span>
           </div>
         </div>
@@ -599,6 +670,7 @@ export function StatusDashboard({ initialStatus }: { initialStatus: PublicStatus
                 key={group.id}
                 group={group}
                 historyAnchor={period.to}
+                rangeLabel={period.label}
                 timezone={initialStatus.statusPage.timezone}
                 selectedHistory={selectedHistory}
                 previewHistory={previewHistory}

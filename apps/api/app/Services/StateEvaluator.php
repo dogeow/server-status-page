@@ -10,19 +10,67 @@ use App\Models\MaintenanceWindow;
 use App\Models\Monitor;
 use App\Models\OutboxEvent;
 use App\Models\StatusInterval;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
 class StateEvaluator
 {
-    public function evaluate(CheckResult $result): void
+    public function evaluate(CheckResult $result): bool
     {
-        DB::transaction(function () use ($result): void {
+        return DB::transaction(function () use ($result): bool {
             $monitor = Monitor::query()->lockForUpdate()->findOrFail($result->monitor_id);
+            if ($monitor->last_checked_at !== null && $result->scheduled_at->lessThanOrEqualTo($monitor->last_checked_at)) {
+                return false;
+            }
             $component = Component::query()->with('group')->lockForUpdate()->findOrFail($monitor->component_id);
             $inMaintenance = $this->inMaintenance($component, $result->scheduled_at);
             $this->applyResult($monitor, $result, $inMaintenance);
-            $this->aggregateComponent($component, $result, $inMaintenance);
+            $this->applyAggregate($component, $result->scheduled_at, $inMaintenance);
+
+            return true;
         });
+    }
+
+    public function reconcile(Component $component, CarbonInterface $at): void
+    {
+        DB::transaction(function () use ($component, $at): void {
+            $locked = Component::query()->with('group')->lockForUpdate()->findOrFail($component->id);
+            $this->applyAggregate($locked, $at, $this->inMaintenance($locked, $at));
+        });
+    }
+
+    public function reconcileMaintenanceBoundaries(?CarbonInterface $at = null): int
+    {
+        $at = $at ? CarbonImmutable::parse($at)->utc() : CarbonImmutable::now('UTC');
+        $activeWindow = function ($query) use ($at): void {
+            $query->where('maintenance_windows.starts_at', '<=', $at)
+                ->where('maintenance_windows.ends_at', '>=', $at)
+                ->whereNotIn('maintenance_windows.status', ['cancelled', 'completed']);
+        };
+        $entering = Component::query()
+            ->where('status', '!=', ComponentStatus::Maintenance->value)
+            ->whereHas('maintenanceWindows', $activeWindow)
+            ->pluck('id');
+        $leaving = Component::query()
+            ->where('status', ComponentStatus::Maintenance->value)
+            ->whereDoesntHave('maintenanceWindows', $activeWindow)
+            ->pluck('id');
+
+        $changed = 0;
+        foreach ($entering->merge($leaving)->unique() as $id) {
+            $component = Component::query()->find($id);
+            if (! $component) {
+                continue;
+            }
+            $previous = $component->status;
+            $this->reconcile($component, $at);
+            if ($component->fresh()->status !== $previous) {
+                $changed++;
+            }
+        }
+
+        return $changed;
     }
 
     private function applyResult(Monitor $monitor, CheckResult $result, bool $suppressAlerts): void
@@ -116,7 +164,7 @@ class StateEvaluator
         $monitor->save();
     }
 
-    private function aggregateComponent(Component $component, CheckResult $result, bool $inMaintenance): void
+    private function applyAggregate(Component $component, CarbonInterface $at, bool $inMaintenance): void
     {
         $component->load('group');
         $previous = $component->status;
@@ -142,17 +190,17 @@ class StateEvaluator
             return;
         }
 
-        $component->update(['status' => $next, 'status_changed_at' => $result->scheduled_at]);
-        StatusInterval::query()->where('component_id', $component->id)->whereNull('ended_at')->update(['ended_at' => $result->scheduled_at]);
+        $component->update(['status' => $next, 'status_changed_at' => $at]);
+        StatusInterval::query()->where('component_id', $component->id)->whereNull('ended_at')->update(['ended_at' => $at]);
         StatusInterval::query()->create([
             'component_id' => $component->id,
             'status' => $next,
-            'started_at' => $result->scheduled_at,
+            'started_at' => $at,
             'is_maintenance' => $inMaintenance,
         ]);
 
         if (! $inMaintenance) {
-            $this->syncAutomaticIncident($component, $previous, $next, $result->scheduled_at);
+            $this->syncAutomaticIncident($component, $next, $at);
         }
 
         $this->outbox('component.status_changed', 'component', $component->id, [
@@ -160,11 +208,11 @@ class StateEvaluator
             'status_page_id' => $component->group->status_page_id,
             'from' => $previous,
             'to' => $next,
-            'at' => $result->scheduled_at->toIso8601String(),
+            'at' => CarbonImmutable::parse($at)->utc()->toIso8601String(),
         ]);
     }
 
-    private function syncAutomaticIncident(Component $component, string $previous, string $next, $at): void
+    private function syncAutomaticIncident(Component $component, string $next, $at): void
     {
         $active = Incident::query()
             ->where('is_automatic', true)
@@ -173,12 +221,7 @@ class StateEvaluator
             ->latest('id')
             ->first();
 
-        $impact = match ($next) {
-            ComponentStatus::MajorOutage->value => 'major_outage',
-            ComponentStatus::PartialOutage->value => 'partial_outage',
-            ComponentStatus::Degraded->value => 'degraded_performance',
-            default => null,
-        };
+        $impact = $this->impactForStatus($next);
 
         if ($impact && ! $active) {
             $incident = Incident::query()->create([
@@ -196,15 +239,73 @@ class StateEvaluator
                 'message' => '自动监控检测到服务异常，等待管理员处理。',
             ]);
             $this->outbox('incident.created', 'incident', $incident->id, $this->incidentPayload($incident, $component));
-        } elseif ($impact && $active && $active->impact !== $impact) {
-            $active->update(['impact' => $impact]);
-            $active->updates()->create(['status' => $active->status, 'message' => '监控状态已更新为 '.$impact.'。']);
-            $this->outbox('incident.updated', 'incident', $active->id, $this->incidentPayload($active, $component));
-        } elseif ($next === ComponentStatus::Operational->value && $active) {
+
+            return;
+        }
+
+        if (! $active) {
+            return;
+        }
+
+        $active->load('components');
+        $statuses = Component::query()->whereIn('id', $active->components->pluck('id'))->pluck('status');
+        $faultImpact = $this->worstImpact($statuses->all());
+        if ($faultImpact) {
+            if ($active->impact !== $faultImpact) {
+                $active->update(['impact' => $faultImpact]);
+                $active->updates()->create([
+                    'status' => $active->status,
+                    'message' => '监控状态已更新为'.$this->impactLabel($faultImpact).'。',
+                ]);
+                $this->outbox('incident.updated', 'incident', $active->id, $this->incidentPayload($active, $component));
+            }
+
+            return;
+        }
+
+        $allOperational = $statuses->isNotEmpty() && $statuses->every(
+            fn (string $status) => $status === ComponentStatus::Operational->value,
+        );
+        if ($allOperational) {
             $active->update(['status' => 'resolved', 'resolved_at' => $at]);
             $active->updates()->create(['status' => 'resolved', 'message' => '监控确认服务已经恢复。']);
             $this->outbox('incident.resolved', 'incident', $active->id, $this->incidentPayload($active, $component));
         }
+    }
+
+    private function impactForStatus(string $status): ?string
+    {
+        return match ($status) {
+            ComponentStatus::MajorOutage->value => 'major_outage',
+            ComponentStatus::PartialOutage->value => 'partial_outage',
+            ComponentStatus::Degraded->value => 'degraded_performance',
+            default => null,
+        };
+    }
+
+    /** @param  list<string>  $statuses */
+    private function worstImpact(array $statuses): ?string
+    {
+        $rank = ['degraded_performance' => 1, 'partial_outage' => 2, 'major_outage' => 3];
+        $impact = null;
+        foreach ($statuses as $status) {
+            $candidate = $this->impactForStatus($status);
+            if ($candidate && ($impact === null || $rank[$candidate] > $rank[$impact])) {
+                $impact = $candidate;
+            }
+        }
+
+        return $impact;
+    }
+
+    private function impactLabel(string $impact): string
+    {
+        return match ($impact) {
+            'major_outage' => '严重中断',
+            'partial_outage' => '部分中断',
+            'degraded_performance' => '性能下降',
+            default => '异常',
+        };
     }
 
     private function inMaintenance(Component $component, $at): bool

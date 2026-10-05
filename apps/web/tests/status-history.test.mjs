@@ -3,35 +3,31 @@ import test from "node:test";
 
 import { fillHistory, getHistoryPeriod } from "../app/lib/status-history.ts";
 
-function periodInTimezone(timezone, anchor, offset) {
-  const previous = process.env.TZ;
-  process.env.TZ = timezone;
-  try {
-    return getHistoryPeriod(anchor, offset);
-  } finally {
-    if (previous === undefined) delete process.env.TZ;
-    else process.env.TZ = previous;
-  }
-}
-
-test("history period is identical in UTC and Asia/Shanghai", () => {
+test("history period is 90 days in the requested timezone", () => {
   const anchor = "2026-03-31T23:30:00.000Z";
-  const utc = periodInTimezone("UTC", anchor, -1);
-  const shanghai = periodInTimezone("Asia/Shanghai", anchor, -1);
 
-  assert.deepEqual(shanghai, utc);
-  assert.deepEqual(utc, {
-    from: "2025-09-30",
+  assert.deepEqual(getHistoryPeriod(anchor, -1, "UTC"), {
+    from: "2025-10-03",
     to: "2025-12-31",
-    label: "2025年9月 – 2025年12月",
+    label: "2025年10月 – 2025年12月",
+  });
+  assert.deepEqual(getHistoryPeriod(anchor, -1, "Asia/Shanghai"), {
+    from: "2025-10-04",
+    to: "2026-01-01",
+    label: "2025年10月 – 2026年1月",
+  });
+  assert.deepEqual(getHistoryPeriod(anchor, 0, "UTC"), {
+    from: "2026-01-01",
+    to: "2026-03-31",
+    label: "2026年1月 – 2026年3月",
   });
 });
 
-test("month-end period navigation clamps dates consistently", () => {
-  assert.deepEqual(getHistoryPeriod("2026-05-31T23:30:00.000Z", -1), {
-    from: "2025-11-30",
-    to: "2026-02-28",
-    label: "2025年11月 – 2026年2月",
+test("month-end period navigation stays on 90 local days", () => {
+  assert.deepEqual(getHistoryPeriod("2026-05-31T23:30:00.000Z", -1, "UTC"), {
+    from: "2025-12-03",
+    to: "2026-03-02",
+    label: "2025年12月 – 2026年3月",
   });
 });
 

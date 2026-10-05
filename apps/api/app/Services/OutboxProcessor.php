@@ -3,12 +3,14 @@
 namespace App\Services;
 
 use App\Events\PublicStatusChanged;
+use App\Models\Component;
 use App\Models\Incident;
 use App\Models\MaintenanceWindow;
 use App\Models\NotificationChannel;
 use App\Models\NotificationDelivery;
 use App\Models\NotificationPolicy;
 use App\Models\OutboxEvent;
+use App\Models\StatusPage;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -42,7 +44,17 @@ class OutboxProcessor
 
         foreach ($events as $event) {
             try {
-                $this->deliver($event);
+                $deferUntil = $this->deliver($event);
+                if ($deferUntil) {
+                    $event->update([
+                        'available_at' => $deferUntil,
+                        'last_error' => null,
+                        'claimed_at' => null,
+                        'claim_token' => null,
+                    ]);
+
+                    continue;
+                }
                 $event->update(['processed_at' => now(), 'last_error' => null, 'claimed_at' => null, 'claim_token' => null]);
             } catch (Throwable $exception) {
                 report($exception);
@@ -61,34 +73,50 @@ class OutboxProcessor
         return $events->count();
     }
 
-    private function deliver(OutboxEvent $event): void
+    private function deliver(OutboxEvent $event): ?CarbonImmutable
     {
         $incident = $event->aggregate_type === 'incident' ? Incident::query()->with('components')->find($event->aggregate_id) : null;
         $pageId = $incident?->status_page_id ?: ($event->payload['status_page_id'] ?? null);
         if (! $pageId) {
-            return;
+            return null;
         }
 
         if (str_starts_with($event->type, 'incident.') || str_starts_with($event->type, 'maintenance.') || in_array($event->type, ['component.status_changed', 'agent.offline'], true)) {
             $this->broadcastBestEffort((int) $pageId, $event);
         }
         if ($event->type === 'component.status_changed') {
-            return;
+            return null;
         }
 
         $policies = NotificationPolicy::query()->where('status_page_id', $pageId)->where('enabled', true)->with('channel')->get();
         $componentIds = $incident?->components->pluck('id')
             ?: collect($event->payload['component_ids'] ?? array_filter([$event->payload['component_id'] ?? null]));
+        $applicable = 0;
+        $delivered = 0;
+        $deferUntil = null;
         foreach ($policies as $policy) {
-            if (! $policy->channel?->enabled || ! $this->policyAllows($policy, $event)) {
+            if (! $policy->channel?->enabled || ! $this->policyMatches($policy, $event)) {
                 continue;
             }
             if ($policy->component_ids && $componentIds->intersect($policy->component_ids)->isEmpty()) {
                 continue;
             }
+            $applicable++;
+            $quietUntil = $event->type === 'incident.resolved' ? null : $this->quietWindowEnd($policy);
+            if ($quietUntil) {
+                $deferUntil = $deferUntil === null || $quietUntil->lessThan($deferUntil) ? $quietUntil : $deferUntil;
+
+                continue;
+            }
             $this->deliverChannel($event, $policy->channel);
+            $delivered++;
         }
 
+        if ($applicable > 0 && $delivered === 0 && $deferUntil) {
+            return $deferUntil;
+        }
+
+        return null;
     }
 
     private function deliverChannel(OutboxEvent $event, NotificationChannel $channel): void
@@ -115,14 +143,19 @@ class OutboxProcessor
                     $this->sendMail($recipient, (string) ($event->payload['title'] ?? '状态更新'), $this->message($event));
                 }
             } elseif ($channel->type === 'webhook') {
+                $pinned = app(WebhookUrlGuard::class)->pin((string) ($channel->config['url'] ?? ''));
                 $body = json_encode($this->webhookPayload($event, $delivery->id), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 $secret = (string) ($channel->config['secret'] ?? '');
                 $response = Http::timeout((int) config('status.webhook_timeout_seconds', 10))
+                    ->withOptions([
+                        'allow_redirects' => false,
+                        'curl' => [CURLOPT_RESOLVE => [$pinned['resolve']]],
+                    ])
                     ->withHeaders([
                         'X-Status-Delivery' => $delivery->id,
                         'X-Status-Signature' => 'sha256='.hash_hmac('sha256', $body, $secret),
                     ])->withBody($body, 'application/json')
-                    ->send('POST', (string) $channel->config['url']);
+                    ->send('POST', $pinned['url']);
                 $response->throw();
             }
             $delivery->update(['status' => 'delivered', 'delivered_at' => now(), 'attempts' => $delivery->attempts + 1, 'last_error' => null]);
@@ -139,6 +172,10 @@ class OutboxProcessor
 
     private function broadcastBestEffort(int $pageId, OutboxEvent $event): void
     {
+        if (! $this->publiclyBroadcastable($pageId, $event)) {
+            return;
+        }
+
         $publicPayload = array_filter([
             'status_page_id' => $pageId,
             'component_id' => $event->payload['component_id'] ?? null,
@@ -181,7 +218,42 @@ class OutboxProcessor
         ];
     }
 
-    private function policyAllows(NotificationPolicy $policy, OutboxEvent $event): bool
+    private function publiclyBroadcastable(int $pageId, OutboxEvent $event): bool
+    {
+        $page = StatusPage::query()->find($pageId);
+        if (! $page || ! $page->is_public) {
+            return false;
+        }
+        if ($event->aggregate_type === 'component') {
+            $component = Component::query()->find($event->aggregate_id);
+
+            return $component && ! $component->is_hidden;
+        }
+        if ($event->aggregate_type === 'incident') {
+            $incident = Incident::query()->with('components:id,is_hidden')->find($event->aggregate_id);
+            if (! $incident || ! $incident->is_public) {
+                return false;
+            }
+
+            return $incident->components->isEmpty() || $incident->components->contains(fn (Component $component) => ! $component->is_hidden);
+        }
+        if ($event->type === 'agent.offline') {
+            $ids = collect($event->payload['component_ids'] ?? [])->filter();
+            if ($ids->isEmpty()) {
+                return true;
+            }
+            $components = Component::query()->whereIn('id', $ids)->get(['id', 'is_hidden']);
+            if ($components->isEmpty()) {
+                return true;
+            }
+
+            return $components->contains(fn (Component $component): bool => ! $component->is_hidden);
+        }
+
+        return true;
+    }
+
+    private function policyMatches(NotificationPolicy $policy, OutboxEvent $event): bool
     {
         $events = $policy->events ?: [];
         $subscribed = $events === [] || in_array($event->type, $events, true);
@@ -192,13 +264,6 @@ class OutboxProcessor
             return false;
         }
 
-        // Recovery is always delivered, even during quiet hours.
-        if ($event->type === 'incident.resolved') {
-            return true;
-        }
-        if ($this->isQuietTime($policy)) {
-            return false;
-        }
         if ($event->type === 'incident.reminder') {
             if ($policy->repeat_minutes <= 0) {
                 return false;
@@ -218,27 +283,37 @@ class OutboxProcessor
         return true;
     }
 
-    private function isQuietTime(NotificationPolicy $policy): bool
+    private function quietWindowEnd(NotificationPolicy $policy): ?CarbonImmutable
     {
         $quiet = $policy->quiet_hours;
         if (! is_array($quiet) || empty($quiet['start']) || empty($quiet['end'])) {
-            return false;
+            return null;
         }
-        $timezone = (string) ($quiet['timezone'] ?? 'Asia/Shanghai');
-        $now = now($timezone);
+        try {
+            $now = CarbonImmutable::now((string) ($quiet['timezone'] ?? 'Asia/Shanghai'));
+        } catch (Throwable) {
+            return null;
+        }
         $minutes = $now->hour * 60 + $now->minute;
         [$startHour, $startMinute] = array_pad(array_map('intval', explode(':', (string) $quiet['start'], 2)), 2, 0);
         [$endHour, $endMinute] = array_pad(array_map('intval', explode(':', (string) $quiet['end'], 2)), 2, 0);
         $start = $startHour * 60 + $startMinute;
         $end = $endHour * 60 + $endMinute;
-
         if ($start === $end) {
-            return false;
+            return null;
         }
-
-        return $start < $end
+        $inside = $start < $end
             ? $minutes >= $start && $minutes < $end
             : $minutes >= $start || $minutes < $end;
+        if (! $inside) {
+            return null;
+        }
+        $endAt = $now->setTime($endHour, $endMinute, 0);
+        if ($endAt->lessThanOrEqualTo($now)) {
+            $endAt = $endAt->addDay();
+        }
+
+        return $endAt->utc();
     }
 
     private function message(OutboxEvent $event): string

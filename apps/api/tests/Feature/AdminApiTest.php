@@ -33,6 +33,12 @@ class AdminApiTest extends TestCase
 
         $this->assertSame('main', $page['slug']);
         $this->assertDatabaseHas('audit_logs', ['user_id' => $admin->id, 'action' => 'create']);
+        $this->postJson('/api/admin/v1/users', [
+            'name' => 'New Owner',
+            'email' => 'new-owner@example.test',
+            'password' => 'a-long-password',
+            'role' => 'owner',
+        ])->assertForbidden();
     }
 
     public function test_monitor_frequency_is_limited_to_fifteen_seconds_through_twenty_four_hours(): void

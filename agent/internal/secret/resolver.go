@@ -32,19 +32,28 @@ func (r *Resolver) ResolveJSON(raw json.RawMessage) (json.RawMessage, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, errors.New("probe config is not valid JSON")
 	}
-	resolved, err := r.walk(value)
+	resolved, err := r.walk(value, "")
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(resolved)
 }
 
-func (r *Resolver) walk(value any) (any, error) {
+func forbiddenSecretKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "headers", "body", "query", "data", "payload", "form":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Resolver) walk(value any, key string) (any, error) {
 	switch typed := value.(type) {
 	case []any:
 		out := make([]any, len(typed))
 		for i, item := range typed {
-			v, err := r.walk(item)
+			v, err := r.walk(item, key)
 			if err != nil {
 				return nil, err
 			}
@@ -53,15 +62,22 @@ func (r *Resolver) walk(value any) (any, error) {
 		return out, nil
 	case map[string]any:
 		if ref, ok := typed["secretRef"].(string); ok && len(typed) == 1 {
+			if forbiddenSecretKey(key) {
+				return nil, errors.New("secretRef is not allowed for this field")
+			}
 			return r.Resolve(ref)
 		}
 		out := make(map[string]any, len(typed))
-		for key, item := range typed {
-			v, err := r.walk(item)
+		for childKey, item := range typed {
+			nextKey := childKey
+			if forbiddenSecretKey(key) {
+				nextKey = key
+			}
+			v, err := r.walk(item, nextKey)
 			if err != nil {
 				return nil, err
 			}
-			out[key] = v
+			out[childKey] = v
 		}
 		return out, nil
 	default:
@@ -74,16 +90,27 @@ func (r *Resolver) Resolve(ref string) (string, error) {
 	var ok bool
 	switch {
 	case strings.HasPrefix(ref, "env://"):
-		value, ok = os.LookupEnv(strings.TrimPrefix(ref, "env://"))
+		name := strings.TrimPrefix(ref, "env://")
+		if !allowedEnvName(name) {
+			return "", errors.New("secret environment variable is not allowed")
+		}
+		value, ok = os.LookupEnv(name)
 		if !ok {
 			return "", fmt.Errorf("secret environment variable is not set")
 		}
 	case strings.HasPrefix(ref, "env:"):
-		value, ok = os.LookupEnv(strings.TrimPrefix(ref, "env:"))
+		name := strings.TrimPrefix(ref, "env:")
+		if !allowedEnvName(name) {
+			return "", errors.New("secret environment variable is not allowed")
+		}
+		value, ok = os.LookupEnv(name)
 		if !ok {
 			return "", fmt.Errorf("secret environment variable is not set")
 		}
 	case strings.HasPrefix(ref, "file://") || strings.HasPrefix(ref, "file:"):
+		if r.fileRoot == "" {
+			return "", errors.New("file secrets require secret_file_root")
+		}
 		path := strings.TrimPrefix(strings.TrimPrefix(ref, "file://"), "file:")
 		abs, err := filepath.Abs(path)
 		if err != nil {
@@ -125,6 +152,13 @@ func (r *Resolver) Resolve(ref string) (string, error) {
 	r.values = append(r.values, value)
 	r.mu.Unlock()
 	return value, nil
+}
+
+func allowedEnvName(name string) bool {
+	if name == "" || strings.Contains(name, "=") || strings.ContainsRune(name, 0) {
+		return false
+	}
+	return strings.HasPrefix(name, "STATUS_")
 }
 
 func (r *Resolver) Redact(message string) string {

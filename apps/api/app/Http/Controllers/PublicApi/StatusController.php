@@ -4,7 +4,6 @@ namespace App\Http\Controllers\PublicApi;
 
 use App\Enums\ComponentStatus;
 use App\Http\Controllers\Controller;
-use App\Models\CheckResult;
 use App\Models\Component;
 use App\Models\DailyRollup;
 use App\Models\Incident;
@@ -35,7 +34,17 @@ class StatusController extends Controller
                     ->with('updates')
                     ->latest('started_at'),
             ]),
-            'incidents' => fn ($query) => $query->where('is_public', true)->whereNull('resolved_at')->with(['updates', 'components:id,name,slug'])->latest('started_at'),
+            'incidents' => fn ($query) => $query
+                ->where('is_public', true)
+                ->whereNull('resolved_at')
+                ->where(function ($nested): void {
+                    $nested->where('is_automatic', false)
+                        ->orWhereHas('components', fn ($components) => $components
+                            ->where('is_hidden', false)
+                            ->where('status', '!=', ComponentStatus::Unknown->value));
+                })
+                ->with(['updates', 'components:id,name,slug'])
+                ->latest('started_at'),
             'maintenanceWindows' => fn ($query) => $query->where('ends_at', '>=', now())->whereNotIn('status', ['cancelled', 'completed'])->with('components:id,name,slug')->orderBy('starts_at'),
         ]);
 
@@ -165,7 +174,7 @@ class StatusController extends Controller
                     'name' => $component->name,
                     'slug' => $component->slug,
                     'description' => $component->description,
-                    'status' => $component->status,
+                    'status' => $this->observedWorstStatus($dailyHistory->pluck('status')->all()),
                     'uptime_percent' => $this->rollupUptime($component->rollups),
                     'latency_ms' => $latencies->isEmpty() ? null : (int) round($latencies->avg()),
                     'daily_history' => $dailyHistory,
@@ -192,7 +201,7 @@ class StatusController extends Controller
                 'id' => $group->id,
                 'name' => $group->name,
                 'slug' => $group->slug,
-                'status' => $this->worstStatus($components->pluck('status')->all()),
+                'status' => $this->observedWorstStatus($components->pluck('status')->all()),
                 'component_count' => $components->count(),
                 'uptime_percent' => $this->rollupUptime($group->components->flatMap->rollups),
                 'latency_ms' => $latencies->isEmpty() ? null : (int) round($latencies->avg()),
@@ -205,7 +214,7 @@ class StatusController extends Controller
             'status_page' => ['id' => $page->id, 'name' => $page->name, 'slug' => $page->slug],
             'from' => $from->toDateString(),
             'to' => $to->toDateString(),
-            'overall_status' => $this->worstStatus($groups->pluck('status')->all()),
+            'overall_status' => $this->observedWorstStatus($groups->pluck('status')->all()),
             'generated_at' => now()->toIso8601String(),
             'history_available_from' => $this->historyAvailableFrom($page),
             'groups' => $groups,
@@ -251,8 +260,11 @@ class StatusController extends Controller
             return $payload;
         });
         $uptime = $this->rollupUptime($component->rollups);
-        $monitorIds = $component->monitors()->pluck('id');
-        $latency = CheckResult::query()->whereIn('monitor_id', $monitorIds)->whereNotNull('latency_ms')->latest('scheduled_at')->value('latency_ms');
+        $latency = $component->rollups
+            ->filter(fn ($rollup) => $rollup->average_latency_ms !== null)
+            ->sortByDesc(fn ($rollup) => $rollup->date->toDateString())
+            ->first()
+            ?->average_latency_ms;
 
         return [
             'id' => $component->id,
@@ -385,6 +397,16 @@ class StatusController extends Controller
                 'created_at' => $update->created_at->toIso8601String(),
             ]),
         ];
+    }
+
+    private function observedWorstStatus(array $statuses): string
+    {
+        $known = array_values(array_filter(
+            $statuses,
+            fn (string $status) => $status !== ComponentStatus::Unknown->value,
+        ));
+
+        return $this->worstStatus($known === [] ? $statuses : $known);
     }
 
     private function worstStatus(array $statuses): string

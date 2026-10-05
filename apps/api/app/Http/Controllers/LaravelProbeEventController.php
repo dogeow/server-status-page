@@ -11,23 +11,17 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class LaravelProbeEventController extends Controller
 {
     public function __invoke(Request $request, LaravelIntegration $integration, PushResultRecorder $recorder): JsonResponse
     {
+        if (strlen($request->getContent()) > 65536) {
+            return response()->json(['message' => 'Payload is too large.', 'code' => 'payload_too_large'], 413);
+        }
         if (! $integration->enabled || ! $this->authenticate($request, $integration)) {
             return response()->json(['message' => 'Probe authentication failed.', 'code' => 'invalid_probe_signature'], 401);
-        }
-
-        try {
-            UsedNonce::query()->create([
-                'scope' => 'laravel-integration:'.$integration->id,
-                'nonce' => (string) $request->header('X-Status-Probe-Nonce'),
-                'expires_at' => now()->addSeconds(config('status.agent_signature_ttl', 300) * 2),
-            ]);
-        } catch (UniqueConstraintViolationException) {
-            return response()->json(['message' => 'Nonce already used.', 'code' => 'replayed_nonce'], 409);
         }
 
         $data = $request->validate([
@@ -39,25 +33,57 @@ class LaravelProbeEventController extends Controller
             'application.instance_id' => ['nullable', 'string', 'max:255'],
             'payload' => ['present', 'array'],
         ]);
+        validator($data['payload'], [
+            'code' => ['nullable', 'string', 'max:64'],
+        ])->validate();
         if ($data['application']['id'] !== $integration->application_id) {
             return response()->json(['message' => 'Application id does not match this integration.', 'code' => 'application_mismatch'], 422);
         }
 
         $supported = ['queue.enqueued', 'queue.started', 'queue.completed', 'queue.failed', 'queue.dispatch_failed', 'scheduler.tick', 'scheduler.task_succeeded', 'scheduler.task_failed'];
         if (! in_array($data['event'], $supported, true)) {
+            try {
+                $this->consumeNonce($request, $integration);
+            } catch (UniqueConstraintViolationException) {
+                return response()->json(['message' => 'Nonce already used.', 'code' => 'replayed_nonce'], 409);
+            }
+
             return response()->json(['accepted' => true, 'routed' => 0, 'ignored' => true], 202);
         }
 
         $occurredAt = CarbonImmutable::parse($data['occurred_at'])->utc();
-        $monitors = $this->monitors($integration, $data['event'], $data['payload']);
-        $routed = 0;
-        foreach ($monitors as $monitor) {
-            $this->routeEvent($integration, $monitor, $data['event'], $occurredAt, $data['payload'], $recorder);
-            $routed++;
+        $skew = max(0, (int) config('status.sample_future_skew_seconds', config('status.agent_signature_ttl', 300)));
+        if ($occurredAt->greaterThan(now()->addSeconds($skew))) {
+            return response()->json(['message' => 'occurred_at is outside the accepted window.', 'code' => 'scheduled_at_out_of_range'], 422);
         }
-        $integration->update(['last_seen_at' => now()]);
+
+        try {
+            $routed = DB::transaction(function () use ($request, $integration, $data, $occurredAt, $recorder): int {
+                $this->consumeNonce($request, $integration);
+                $monitors = $this->monitors($integration, $data['event'], $data['payload']);
+                $count = 0;
+                foreach ($monitors as $monitor) {
+                    $this->routeEvent($integration, $monitor, $data['event'], $occurredAt, $data['payload'], $recorder);
+                    $count++;
+                }
+                $integration->update(['last_seen_at' => now()]);
+
+                return $count;
+            });
+        } catch (UniqueConstraintViolationException) {
+            return response()->json(['message' => 'Nonce already used.', 'code' => 'replayed_nonce'], 409);
+        }
 
         return response()->json(['accepted' => true, 'routed' => $routed], 202);
+    }
+
+    private function consumeNonce(Request $request, LaravelIntegration $integration): void
+    {
+        UsedNonce::query()->create([
+            'scope' => 'laravel-integration:'.$integration->id,
+            'nonce' => (string) $request->header('X-Status-Probe-Nonce'),
+            'expires_at' => now()->addSeconds(config('status.agent_signature_ttl', 300) * 2),
+        ]);
     }
 
     private function authenticate(Request $request, LaravelIntegration $integration): bool
@@ -129,7 +155,7 @@ class LaravelProbeEventController extends Controller
                 $recorder->record($monitor, 'ok', $occurredAt, $latency, null, ['event' => $event, 'target' => $run->target]);
             } elseif (in_array($event, ['queue.failed', 'queue.dispatch_failed'], true)) {
                 $run->update(['completed_at' => $occurredAt, 'status' => 'failed']);
-                $recorder->record($monitor, 'failed', $occurredAt, null, (string) ($payload['code'] ?? 'queue_probe_failed'), ['event' => $event, 'target' => $run->target]);
+                $recorder->record($monitor, 'failed', $occurredAt, null, $this->errorCode($payload, 'queue_probe_failed'), ['event' => $event, 'target' => $run->target]);
             }
 
             return;
@@ -138,7 +164,14 @@ class LaravelProbeEventController extends Controller
         if ($event === 'scheduler.tick' || $event === 'scheduler.task_succeeded') {
             $recorder->record($monitor, 'ok', $occurredAt, isset($payload['metadata']['duration_ms']) ? (int) round($payload['metadata']['duration_ms']) : null, null, ['event' => $event]);
         } elseif ($event === 'scheduler.task_failed') {
-            $recorder->record($monitor, 'failed', $occurredAt, isset($payload['metadata']['duration_ms']) ? (int) round($payload['metadata']['duration_ms']) : null, (string) ($payload['code'] ?? 'scheduler_task_failed'), ['event' => $event]);
+            $recorder->record($monitor, 'failed', $occurredAt, isset($payload['metadata']['duration_ms']) ? (int) round($payload['metadata']['duration_ms']) : null, $this->errorCode($payload, 'scheduler_task_failed'), ['event' => $event]);
         }
+    }
+
+    private function errorCode(array $payload, string $fallback): string
+    {
+        $code = (string) ($payload['code'] ?? $fallback);
+
+        return substr($code !== '' ? $code : $fallback, 0, 64);
     }
 }

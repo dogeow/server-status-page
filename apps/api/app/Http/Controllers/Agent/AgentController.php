@@ -5,9 +5,8 @@ namespace App\Http\Controllers\Agent;
 use App\Http\Controllers\Controller;
 use App\Models\Agent;
 use App\Models\AgentEnrollmentToken;
-use App\Models\CheckResult;
 use App\Models\Monitor;
-use App\Services\StateEvaluator;
+use App\Services\CheckIngestor;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Http\JsonResponse;
@@ -76,9 +75,7 @@ class AgentController extends Controller
             'connect_timeout_ms' => (int) (($monitor->config['connect_timeout_ms'] ?? null) ?: min(2000, $monitor->timeout_seconds * 1000)),
             'slow_threshold_ms' => $monitor->slow_threshold_ms,
             'config_version' => (string) $monitor->config_version,
-            'config' => ($monitor->secret_config || $monitor->config)
-                ? array_merge($monitor->config ?: [], $monitor->secret_config ?: [])
-                : new \stdClass,
+            'config' => $this->agentMonitorConfig($monitor),
         ])->values();
 
         $payload = ['version' => (string) $agent->plan_version, 'monitors' => $monitors];
@@ -123,7 +120,7 @@ class AgentController extends Controller
         return response()->json(['ok' => true, 'server_time' => now()->toIso8601String(), 'plan_version' => (string) $agent->plan_version]);
     }
 
-    public function results(Request $request, StateEvaluator $evaluator): JsonResponse
+    public function results(Request $request, CheckIngestor $ingestor): JsonResponse
     {
         $data = $request->validate([
             'results' => ['required', 'array', 'min:1', 'max:500'],
@@ -161,42 +158,47 @@ class AgentController extends Controller
             }
 
             $scheduledAt = CarbonImmutable::parse($item['scheduled_at'])->utc();
-            $inserted = DB::table('check_results')->insertOrIgnore([
-                'monitor_id' => $monitor->id,
-                'agent_id' => $agent->id,
-                'scheduled_at' => $scheduledAt,
-                'config_version' => $configVersion,
-                'status' => $item['status'],
-                'latency_ms' => $item['latency_ms'] ?? null,
-                'error_code' => $item['error_code'] ?? null,
-                'message' => isset($item['message']) ? Str::limit($item['message'], 2000, '') : null,
-                'metrics' => isset($item['metrics']) ? json_encode($item['metrics'], JSON_THROW_ON_ERROR) : null,
-                'received_at' => now(),
-            ]);
+            $outcome = $ingestor->ingest(
+                $monitor,
+                $agent->id,
+                $scheduledAt,
+                $configVersion,
+                $item['status'],
+                $item['latency_ms'] ?? null,
+                $item['error_code'] ?? null,
+                $item['message'] ?? null,
+                $item['metrics'] ?? null,
+            );
 
-            if (! $inserted) {
+            if ($outcome['outcome'] === 'rejected') {
+                $errors[] = ['index' => $index, 'code' => $outcome['code'] ?? 'scheduled_at_out_of_range'];
+
+                continue;
+            }
+            if ($outcome['outcome'] === 'duplicate') {
                 $duplicates++;
 
                 continue;
             }
             $accepted++;
-
-            if ($configVersion !== (string) $monitor->config_version) {
+            if ($outcome['outcome'] === 'skipped') {
                 $skipped++;
-
-                continue;
             }
-
-            $result = CheckResult::query()
-                ->where('monitor_id', $monitor->id)
-                ->where('agent_id', $agent->id)
-                ->where('scheduled_at', $scheduledAt)
-                ->where('config_version', $configVersion)
-                ->firstOrFail();
-            $evaluator->evaluate($result);
         }
 
         return response()->json(compact('accepted', 'duplicates', 'skipped', 'errors'), $errors && $accepted === 0 ? 422 : 202);
+    }
+
+    private function agentMonitorConfig(Monitor $monitor): array|\stdClass
+    {
+        $config = $monitor->config ?: [];
+        foreach ($monitor->secret_config ?: [] as $key => $value) {
+            if (is_array($value) && count($value) === 1 && is_string($value['secretRef'] ?? null)) {
+                $config[$key] = ['secretRef' => $value['secretRef']];
+            }
+        }
+
+        return $config === [] ? new \stdClass : $config;
     }
 
     private function versionScalarRule(bool $allowZero): Closure

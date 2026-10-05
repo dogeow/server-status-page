@@ -4,14 +4,18 @@ namespace Tests\Feature;
 
 use App\Enums\ComponentStatus;
 use App\Models\Agent;
+use App\Models\CheckResult;
 use App\Models\Component;
 use App\Models\ComponentGroup;
 use App\Models\Incident;
+use App\Models\IncidentUpdate;
 use App\Models\MaintenanceWindow;
 use App\Models\Monitor;
 use App\Models\OutboxEvent;
 use App\Models\StatusPage;
 use App\Services\AgentStatusService;
+use App\Services\IncidentReminderService;
+use App\Services\StateEvaluator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -179,6 +183,137 @@ class StateMachineTest extends TestCase
         $this->assertSame(ComponentStatus::Unknown->value, $monitor->fresh()->status);
         $this->assertSame(ComponentStatus::Operational->value, $component->fresh()->status);
         $this->assertDatabaseHas('outbox_events', ['type' => 'component.status_changed', 'aggregate_id' => (string) $component->id]);
+    }
+
+    public function test_failed_evaluation_rolls_back_so_the_same_sample_can_be_retried(): void
+    {
+        [$agent, $monitor] = $this->fixture();
+        $this->app->instance(StateEvaluator::class, new class extends StateEvaluator
+        {
+            public int $calls = 0;
+
+            public function evaluate(CheckResult $result): bool
+            {
+                $this->calls++;
+                if ($this->calls === 1) {
+                    throw new \RuntimeException('evaluator failed');
+                }
+
+                return parent::evaluate($result);
+            }
+        });
+
+        $this->submitResult($agent, $monitor, 'failed', 0)->assertStatus(500);
+        $this->assertDatabaseCount('check_results', 0);
+
+        $this->submitResult($agent, $monitor, 'failed', 0)->assertAccepted()->assertJsonPath('accepted', 1);
+        $this->assertSame(1, $monitor->fresh()->consecutive_failures);
+        $this->assertDatabaseCount('check_results', 1);
+    }
+
+    public function test_older_sample_is_kept_without_rewinding_current_state(): void
+    {
+        [$agent, $monitor, $component] = $this->fixture();
+        $this->submitResult($agent, $monitor, 'failed', 10)->assertAccepted();
+        $this->submitResult($agent, $monitor, 'failed', 11)->assertAccepted();
+        $checkedAt = $monitor->fresh()->last_checked_at;
+
+        $this->submitResult($agent, $monitor, 'failed', 1)->assertAccepted()->assertJsonPath('accepted', 1);
+
+        $monitor->refresh();
+        $this->assertSame(2, $monitor->consecutive_failures);
+        $this->assertTrue($monitor->last_checked_at->equalTo($checkedAt));
+        $this->assertSame(ComponentStatus::Degraded->value, $component->fresh()->status);
+        $this->assertDatabaseCount('check_results', 3);
+    }
+
+    public function test_far_future_sample_is_rejected_without_insert(): void
+    {
+        [$agent, $monitor] = $this->fixture();
+        $payload = $this->payload($monitor, 'failed', now()->addHours(2)->toIso8601String());
+
+        $this->signed($agent, $payload)->assertStatus(422)->assertJsonPath('errors.0.code', 'scheduled_at_out_of_range');
+        $this->assertDatabaseCount('check_results', 0);
+        $this->assertSame(0, $monitor->fresh()->consecutive_failures);
+    }
+
+    public function test_maintenance_boundaries_change_public_status_without_a_new_sample(): void
+    {
+        [, $monitor, $component] = $this->fixture();
+        $monitor->update(['status' => ComponentStatus::MajorOutage->value]);
+        $component->update(['status' => ComponentStatus::MajorOutage->value]);
+        $window = MaintenanceWindow::query()->create([
+            'status_page_id' => $component->group->status_page_id,
+            'name' => 'Deploy',
+            'starts_at' => now()->subMinute(),
+            'ends_at' => now()->addHour(),
+            'status' => 'in_progress',
+        ]);
+        $window->components()->attach($component->id);
+
+        $this->artisan('status:evaluate-maintenance')->assertSuccessful();
+        $this->assertSame(ComponentStatus::Maintenance->value, $component->fresh()->status);
+        $this->assertDatabaseCount('incidents', 0);
+
+        $window->update(['ends_at' => now()->subSecond()]);
+        $this->artisan('status:evaluate-maintenance')->assertSuccessful();
+        $this->assertSame(ComponentStatus::MajorOutage->value, $component->fresh()->status);
+        $this->assertDatabaseCount('incidents', 1);
+    }
+
+    public function test_offline_agent_leaves_an_open_automatic_incident_unresolved(): void
+    {
+        [$agent, $monitor, $component] = $this->fixture();
+        $this->submitResult($agent, $monitor, 'failed', 0)->assertAccepted();
+        $this->submitResult($agent, $monitor, 'failed', 1)->assertAccepted();
+        $this->submitResult($agent, $monitor, 'failed', 2)->assertAccepted();
+        $agent->update(['last_seen_at' => now()->subMinutes(10), 'status' => 'online']);
+
+        app(AgentStatusService::class)->markStaleAgents();
+
+        $this->assertSame(ComponentStatus::Unknown->value, $component->fresh()->status);
+        $this->assertNull(Incident::query()->sole()->resolved_at);
+        $this->assertSame(0, app(IncidentReminderService::class)->schedule());
+    }
+
+    public function test_automatic_incident_stays_open_until_every_attached_component_recovers(): void
+    {
+        [$agent, $monitor, $component] = $this->fixture();
+        $other = Component::query()->create([
+            'component_group_id' => $component->component_group_id,
+            'name' => 'Worker',
+            'slug' => 'worker',
+            'status' => ComponentStatus::MajorOutage->value,
+        ]);
+        $monitor->update(['status' => ComponentStatus::MajorOutage->value, 'consecutive_failures' => 3]);
+        $component->update(['status' => ComponentStatus::MajorOutage->value]);
+        $incident = Incident::query()->create([
+            'status_page_id' => $component->group->status_page_id,
+            'title' => 'Partial',
+            'status' => 'investigating',
+            'impact' => 'major_outage',
+            'is_automatic' => true,
+            'is_public' => true,
+            'started_at' => now()->subMinute(),
+        ]);
+        $incident->components()->attach([$component->id, $other->id]);
+
+        $this->submitResult($agent, $monitor, 'ok', 0)->assertAccepted();
+        $this->submitResult($agent, $monitor, 'ok', 1)->assertAccepted();
+
+        $this->assertSame(ComponentStatus::Operational->value, $component->fresh()->status);
+        $this->assertNull($incident->fresh()->resolved_at);
+        $this->assertSame('major_outage', $incident->fresh()->impact);
+    }
+
+    public function test_automatic_incident_updates_use_chinese_impact_labels(): void
+    {
+        [$agent, $monitor] = $this->fixture();
+        $this->submitResult($agent, $monitor, 'failed', 0)->assertAccepted();
+        $this->submitResult($agent, $monitor, 'failed', 1)->assertAccepted();
+        $this->submitResult($agent, $monitor, 'failed', 2)->assertAccepted();
+
+        $this->assertTrue(IncidentUpdate::query()->where('message', '监控状态已更新为严重中断。')->exists());
     }
 
     private function fixture(): array

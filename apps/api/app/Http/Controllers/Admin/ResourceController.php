@@ -55,7 +55,12 @@ class ResourceController extends Controller
         }
 
         if ($request->filled('search')) {
-            $column = $resource === 'users' ? 'email' : ($resource === 'audit-logs' ? 'action' : 'name');
+            $column = match ($resource) {
+                'users' => 'email',
+                'audit-logs' => 'action',
+                'incident-updates' => 'message',
+                default => 'name',
+            };
             $query->where($column, 'like', '%'.$request->query('search').'%');
         }
 
@@ -72,6 +77,7 @@ class ResourceController extends Controller
 
     public function store(Request $request, string $resource): JsonResponse
     {
+        $this->assertCanManageUsers($request, $resource);
         abort_if(in_array($resource, [...self::READ_ONLY, 'agents'], true), 405);
         $data = $request->validate($this->rules($resource));
         $oneTimeSecret = null;
@@ -104,9 +110,13 @@ class ResourceController extends Controller
 
     public function update(Request $request, string $resource, string $id): JsonResponse
     {
+        $this->assertCanManageUsers($request, $resource);
         abort_if(in_array($resource, self::READ_ONLY, true), 405);
         $item = $this->model($resource)::query()->findOrFail($id);
         $data = $request->validate($this->rules($resource, true, $item));
+        if ($resource === 'users') {
+            $this->assertOwnerSurvives($item, $data, false);
+        }
         $oneTimeSecret = null;
         if ($resource === 'notification-channels') {
             [$data, $oneTimeSecret] = $this->prepareNotificationChannel($data, $item);
@@ -136,9 +146,13 @@ class ResourceController extends Controller
 
     public function destroy(Request $request, string $resource, string $id): JsonResponse
     {
+        $this->assertCanManageUsers($request, $resource);
         abort_if(in_array($resource, self::READ_ONLY, true), 405);
         $item = $this->model($resource)::query()->findOrFail($id);
         abort_if($resource === 'users' && (string) $request->user()->getKey() === (string) $item->getKey(), 422, 'You cannot delete your own account.');
+        if ($resource === 'users') {
+            $this->assertOwnerSurvives($item, [], true);
+        }
         $before = $item->toArray();
 
         DB::transaction(function () use ($request, $resource, $item, $before): void {
@@ -151,6 +165,30 @@ class ResourceController extends Controller
         });
 
         return response()->json(null, 204);
+    }
+
+    private function assertCanManageUsers(Request $request, string $resource): void
+    {
+        if ($resource !== 'users') {
+            return;
+        }
+        abort_unless($request->user()?->role === 'owner', 403, 'Only an owner can manage users.');
+    }
+
+    private function assertOwnerSurvives(Model $user, array $data, bool $deleting): void
+    {
+        if (! $user instanceof User || $user->role !== 'owner') {
+            return;
+        }
+        $demoting = $deleting || (array_key_exists('role', $data) && $data['role'] !== 'owner');
+        if (! $demoting) {
+            return;
+        }
+        abort_if(
+            User::query()->where('role', 'owner')->whereKeyNot($user->getKey())->doesntExist(),
+            422,
+            'At least one owner is required.',
+        );
     }
 
     private function model(string $resource): string
@@ -315,9 +353,7 @@ class ResourceController extends Controller
             /** @var IncidentUpdate $item */
             $incident = $item->incident()->with('components')->firstOrFail();
             $changes = ['status' => $item->status];
-            if ($item->status === 'resolved') {
-                $changes['resolved_at'] = now();
-            }
+            $changes['resolved_at'] = $item->status === 'resolved' ? ($incident->resolved_at ?? now()) : null;
             $incident->update($changes);
             $item = $incident;
             $resource = 'incidents';

@@ -2,6 +2,7 @@
 
 use App\Models\CheckResult;
 use App\Models\DailyRollup;
+use App\Models\OutboxEvent;
 use App\Models\UsedNonce;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -14,6 +15,7 @@ Artisan::command('inspire', function () {
 Schedule::useCache(config('status.scheduler_cache_store', 'database'));
 Schedule::command('status:evaluate-agents')->everyMinute()->withoutOverlapping();
 Schedule::command('status:evaluate-push-monitors')->everyMinute()->withoutOverlapping();
+Schedule::command('status:evaluate-maintenance')->everyMinute()->withoutOverlapping();
 Schedule::command('status:rollup --date=today')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('status:rollup')->dailyAt('00:10')->withoutOverlapping();
 Schedule::command('status:ensure-partitions')->monthlyOn(1, '00:05')->withoutOverlapping();
@@ -21,3 +23,4 @@ Schedule::command('status:schedule-reminders')->everyMinute()->withoutOverlappin
 Schedule::call(fn () => CheckResult::query()->where('scheduled_at', '<', now()->subDays(config('status.raw_result_retention_days', 30)))->delete())->dailyAt('02:00');
 Schedule::call(fn () => DailyRollup::query()->where('date', '<', now()->subMonths(config('status.rollup_retention_months', 13))->toDateString())->delete())->dailyAt('02:15');
 Schedule::call(fn () => UsedNonce::query()->where('expires_at', '<', now())->delete())->hourly();
+Schedule::call(fn () => OutboxEvent::query()->whereNotNull('processed_at')->where('processed_at', '<', now()->subDays((int) config('status.outbox_retention_days', 30)))->delete())->dailyAt('02:30');

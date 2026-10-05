@@ -69,30 +69,42 @@ final class HttpPushClient implements PushClient
             return false;
         }
 
-        try {
-            $response = Http::withHeaders($headers)
-                // Laravel 10 accepts integer timeouts; later versions also accept
-                // floats. Whole seconds keep one implementation compatible with
-                // every supported major.
-                ->connectTimeout(max(1, (int) ceil((float) config('status-probe.push.connect_timeout_seconds', 1.0))))
-                ->timeout(max(1, (int) ceil((float) config('status-probe.push.timeout_seconds', 2.0))))
-                ->withOptions(['verify' => (bool) config('status-probe.push.verify_tls', true)])
-                ->withBody($body, 'application/json')
-                ->post($endpoint);
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            try {
+                if ($attempt > 1) {
+                    $headers = array_merge([
+                        'Accept' => 'application/json',
+                        'Content-Type' => 'application/json',
+                        'User-Agent' => 'status-page-laravel-probe/1',
+                    ], $this->signer->headers($body));
+                }
+                $response = Http::withHeaders($headers)
+                    // Laravel 10 accepts integer timeouts; later versions also accept
+                    // floats. Whole seconds keep one implementation compatible with
+                    // every supported major.
+                    ->connectTimeout(max(1, (int) ceil((float) config('status-probe.push.connect_timeout_seconds', 1.0))))
+                    ->timeout(max(1, (int) ceil((float) config('status-probe.push.timeout_seconds', 2.0))))
+                    ->withOptions(['verify' => (bool) config('status-probe.push.verify_tls', true), 'allow_redirects' => false])
+                    ->withBody($body, 'application/json')
+                    ->post($endpoint);
 
-            if ($response->successful()) {
-                return true;
+                if ($response->successful()) {
+                    return true;
+                }
+                $retryable = in_array($response->status(), [429, 503], true);
+                $this->logger->warning('http_rejected', [
+                    'event' => $safeEvent,
+                    'status' => $response->status(),
+                ]);
+                if (! $retryable) {
+                    return false;
+                }
+            } catch (Throwable $exception) {
+                $this->logger->warning('transport_failed', [
+                    'event' => $safeEvent,
+                    'exception' => $exception::class,
+                ]);
             }
-
-            $this->logger->warning('http_rejected', [
-                'event' => $safeEvent,
-                'status' => $response->status(),
-            ]);
-        } catch (Throwable $exception) {
-            $this->logger->warning('transport_failed', [
-                'event' => $safeEvent,
-                'exception' => $exception::class,
-            ]);
         }
 
         return false;
