@@ -95,6 +95,30 @@ class PushHeartbeatTest extends TestCase
         $this->assertSame(1, Incident::query()->count());
     }
 
+    public function test_capped_heartbeat_stays_publicly_degraded_after_down_threshold_without_repeated_results(): void
+    {
+        $start = CarbonImmutable::parse('2026-07-14 12:00:00 UTC');
+        CarbonImmutable::setTestNow($start);
+        $monitor = $this->monitor('heartbeat');
+        $monitor->update(['config' => ['max_public_status' => ComponentStatus::Degraded->value]]);
+        $component = $monitor->component;
+
+        CarbonImmutable::setTestNow($start->addSeconds(151));
+        $this->assertSame(1, app(PushMonitorHealthService::class)->evaluate());
+        $this->assertSame(ComponentStatus::Degraded->value, $component->fresh()->status);
+
+        CarbonImmutable::setTestNow($start->addSeconds(211));
+        $this->assertSame(1, app(PushMonitorHealthService::class)->evaluate());
+        $this->assertSame(ComponentStatus::MajorOutage->value, $monitor->fresh()->status);
+        $this->assertSame(ComponentStatus::Degraded->value, $component->fresh()->status);
+        $this->assertSame('degraded_performance', Incident::query()->sole()->impact);
+        $this->assertDatabaseCount('check_results', 2);
+
+        CarbonImmutable::setTestNow($start->addSeconds(270));
+        $this->assertSame(0, app(PushMonitorHealthService::class)->evaluate());
+        $this->assertDatabaseCount('check_results', 2);
+    }
+
     public function test_custom_heartbeat_timeouts_require_two_real_heartbeats_to_recover(): void
     {
         $start = CarbonImmutable::parse('2026-07-14 12:00:00 UTC');

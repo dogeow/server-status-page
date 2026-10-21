@@ -168,7 +168,15 @@ class StateEvaluator
     {
         $component->load('group');
         $previous = $component->status;
-        $statuses = $component->monitors()->where('enabled', true)->pluck('status');
+        $statuses = $component->monitors()->where('enabled', true)->get(['status', 'config'])
+            ->map(function (Monitor $monitor): string {
+                if ($monitor->status === ComponentStatus::MajorOutage->value
+                    && ($monitor->config['max_public_status'] ?? null) === ComponentStatus::Degraded->value) {
+                    return ComponentStatus::Degraded->value;
+                }
+
+                return $monitor->status;
+            });
 
         if ($inMaintenance) {
             $next = ComponentStatus::Maintenance->value;

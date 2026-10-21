@@ -79,6 +79,8 @@ sudoedit /etc/server-status-page/local-heartbeat/example.json
 }
 ```
 
+若该监控只支撑附属功能，可在**控制面监控项**的 `config` 中额外设置 `"max_public_status": "degraded_performance"`。本地 reporter 的 JSON 不接受这个字段。控制面仍保留原始中断检查结果，但将该监控对公开组件及自动事件的影响限制为橙色性能下降；同组件其他监控项的严重故障不受限制。通过管理 API 更新监控项时，须先读取并保留现有 `config` 的全部键，因为 PATCH 会整体替换 `config`；更新会增加 `config_version`、写入审计记录并立即重新汇总当前组件状态。既有历史状态和事件不会回写。
+
 ## 4. 启用定时器
 
 实例名 `example` 对应 `/etc/server-status-page/local-heartbeat/example.json`：

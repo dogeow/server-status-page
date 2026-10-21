@@ -45,6 +45,63 @@ class StateMachineTest extends TestCase
         $this->assertNotNull(Incident::query()->sole()->resolved_at);
     }
 
+    public function test_monitor_can_cap_public_failure_at_degraded_without_hiding_its_raw_outage(): void
+    {
+        [$agent, $monitor, $component] = $this->fixture();
+        $monitor->update(['config' => ['max_public_status' => ComponentStatus::Degraded->value]]);
+
+        for ($offset = 0; $offset < 4; $offset++) {
+            $this->submitResult($agent, $monitor, 'failed', $offset)->assertAccepted();
+        }
+
+        $this->assertSame(ComponentStatus::MajorOutage->value, $monitor->fresh()->status);
+        $this->assertSame(ComponentStatus::Degraded->value, $component->fresh()->status);
+        $this->assertDatabaseHas('status_intervals', [
+            'component_id' => $component->id,
+            'status' => ComponentStatus::Degraded->value,
+            'ended_at' => null,
+        ]);
+        $this->assertDatabaseCount('incidents', 1);
+        $this->assertSame('degraded_performance', Incident::query()->sole()->impact);
+        $this->getJson('/api/public/v1/status')->assertOk()
+            ->assertJsonPath('overall_status', 'degraded_performance')
+            ->assertJsonPath('groups.0.components.0.status', 'degraded_performance')
+            ->assertJsonPath('incidents.0.impact', 'degraded_performance');
+
+        $this->submitResult($agent, $monitor, 'ok', 4)->assertAccepted();
+        $this->submitResult($agent, $monitor, 'ok', 5)->assertAccepted();
+        $this->assertSame(ComponentStatus::Operational->value, $component->fresh()->status);
+        $this->assertSame('resolved', Incident::query()->sole()->status);
+    }
+
+    public function test_public_failure_cap_does_not_hide_an_uncapped_monitor_outage(): void
+    {
+        [, $monitor, $component] = $this->fixture();
+        $monitor->update([
+            'config' => ['max_public_status' => ComponentStatus::Degraded->value],
+            'status' => ComponentStatus::MajorOutage->value,
+        ]);
+        $other = Monitor::query()->create([
+            'component_id' => $component->id,
+            'name' => 'Independent HTTP',
+            'type' => 'http',
+            'enabled' => true,
+            'status' => ComponentStatus::Operational->value,
+        ]);
+
+        app(StateEvaluator::class)->reconcile($component, now());
+        $this->assertSame(ComponentStatus::Degraded->value, $component->fresh()->status);
+
+        $other->update(['status' => ComponentStatus::MajorOutage->value]);
+        app(StateEvaluator::class)->reconcile($component, now()->addSecond());
+        $this->assertSame(ComponentStatus::MajorOutage->value, $component->fresh()->status);
+
+        $other->update(['status' => ComponentStatus::Operational->value]);
+        $monitor->update(['config' => []]);
+        app(StateEvaluator::class)->reconcile($component, now()->addSeconds(2));
+        $this->assertSame(ComponentStatus::PartialOutage->value, $component->fresh()->status);
+    }
+
     public function test_expiring_tls_certificate_is_an_admin_warning_not_an_availability_failure(): void
     {
         [$agent, $monitor, $component] = $this->fixture();

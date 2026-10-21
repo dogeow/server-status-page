@@ -16,6 +16,7 @@ use App\Models\NotificationPolicy;
 use App\Models\OutboxEvent;
 use App\Models\StatusPage;
 use App\Models\User;
+use App\Services\StateEvaluator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -125,12 +126,17 @@ class ResourceController extends Controller
 
         DB::transaction(function () use ($request, $resource, $item, $data, $before): void {
             $pivot = Arr::pull($data, 'component_ids');
+            $previousPublicStatusCap = $resource === 'monitors' ? data_get($before, 'config.max_public_status') : null;
             if ($resource === 'monitors' && $data !== []) {
                 $data['config_version'] = $item->config_version + 1;
             }
             $item->update($data);
             $this->syncPivot($resource, $item, $pivot);
             $this->touchAgentPlan($resource, $before['agent_id'] ?? null, $item);
+            if ($resource === 'monitors' && array_key_exists('config', $data)
+                && $previousPublicStatusCap !== data_get($item->config, 'max_public_status')) {
+                app(StateEvaluator::class)->reconcile($item->component, now());
+            }
             $this->audit($request, 'update', $item, $before, $data);
             $this->emitDomainEvent($resource, $item, false);
         });
@@ -224,7 +230,13 @@ class ResourceController extends Controller
                 'type' => [...$sometimes, Rule::in(['http', 'tcp', 'dns', 'tls', 'squid', 'mysql', 'postgresql', 'redis', 'nextjs', 'laravel', 'reverb', 'laravel_queue', 'laravel_scheduler', 'heartbeat'])],
                 'interval_seconds' => ['sometimes', 'integer', 'min:15', 'max:86400'], 'timeout_seconds' => ['sometimes', 'integer', 'min:1', 'max:300'],
                 'slow_threshold_ms' => ['nullable', 'integer', 'min:1'], 'enabled' => ['sometimes', 'boolean'],
-                'config' => ['nullable', 'array'], 'secret_config' => ['nullable', 'array'],
+                'config' => ['nullable', 'array', function ($attribute, $value, $fail): void {
+                    if (is_array($value) && array_key_exists('max_public_status', $value)
+                        && ! in_array($value['max_public_status'], ['degraded_performance', 'major_outage'], true)) {
+                        $fail('The config.max_public_status field must be degraded_performance or major_outage.');
+                    }
+                }],
+                'secret_config' => ['nullable', 'array'],
             ],
             'agents' => ['name' => ['sometimes', 'string', 'max:255'], 'status' => ['sometimes', Rule::in(['online', 'offline', 'revoked'])]],
             'incidents' => [
@@ -334,7 +346,17 @@ class ResourceController extends Controller
 
     private function audit(Request $request, string $action, Model $item, ?array $before, ?array $after): void
     {
-        $redact = fn (?array $values) => $values === null ? null : Arr::except($values, ['password', 'secret', 'secret_config', 'config', 'remember_token']);
+        $redact = function (?array $values) use ($item): ?array {
+            if ($values === null) {
+                return null;
+            }
+            $safe = Arr::except($values, ['password', 'secret', 'secret_config', 'config', 'remember_token']);
+            if ($item instanceof Monitor && array_key_exists('config', $values)) {
+                $safe['max_public_status'] = data_get($values, 'config.max_public_status');
+            }
+
+            return $safe;
+        };
         AuditLog::query()->create([
             'user_id' => $request->user()?->id,
             'action' => $action,

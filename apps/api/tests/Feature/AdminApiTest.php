@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Component;
 use App\Models\ComponentGroup;
+use App\Models\Incident;
 use App\Models\Monitor;
 use App\Models\OutboxEvent;
 use App\Models\StatusPage;
@@ -51,6 +52,69 @@ class AdminApiTest extends TestCase
             'type' => 'http',
             'interval_seconds' => 5,
         ])->assertUnprocessable()->assertJsonValidationErrors(['component_id', 'interval_seconds']);
+    }
+
+    public function test_monitor_public_failure_cap_is_validated_audited_and_reconciled_immediately(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        Sanctum::actingAs($admin);
+        $page = StatusPage::query()->create(['name' => 'Status', 'slug' => 'main']);
+        $group = ComponentGroup::query()->create(['status_page_id' => $page->id, 'name' => 'API', 'slug' => 'api']);
+        $component = Component::query()->create([
+            'component_group_id' => $group->id,
+            'name' => 'Private Traffic',
+            'slug' => 'traffic',
+            'status' => 'major_outage',
+        ]);
+        $monitor = Monitor::query()->create([
+            'component_id' => $component->id,
+            'name' => 'Traffic heartbeat',
+            'type' => 'heartbeat',
+            'enabled' => true,
+            'status' => 'major_outage',
+            'config_version' => 1,
+            'config' => ['degraded_after_seconds' => 150, 'down_after_seconds' => 210],
+        ]);
+        $incident = Incident::query()->create([
+            'status_page_id' => $page->id,
+            'title' => 'Private Traffic 服务异常',
+            'status' => 'investigating',
+            'impact' => 'major_outage',
+            'is_automatic' => true,
+            'is_public' => true,
+            'started_at' => now()->subMinute(),
+        ]);
+        $incident->components()->attach($component->id);
+
+        $url = '/api/admin/v1/monitors/'.$monitor->id;
+        $this->patchJson($url, ['config' => ['max_public_status' => 'not-a-status']])
+            ->assertUnprocessable()->assertJsonValidationErrors('config');
+        $this->assertSame(1, $monitor->fresh()->config_version);
+
+        $this->patchJson($url, ['config' => [
+            'degraded_after_seconds' => 150,
+            'down_after_seconds' => 210,
+            'max_public_status' => 'degraded_performance',
+        ]])->assertOk();
+
+        $monitor->refresh();
+        $this->assertSame(2, $monitor->config_version);
+        $this->assertSame('major_outage', $monitor->status);
+        $this->assertSame(210, $monitor->config['down_after_seconds']);
+        $this->assertSame('degraded_performance', $component->fresh()->status);
+        $this->assertSame('degraded_performance', $incident->fresh()->impact);
+        $this->assertDatabaseHas('audit_logs', ['user_id' => $admin->id, 'action' => 'update']);
+        $audit = \App\Models\AuditLog::query()->where('auditable_type', Monitor::class)->latest('id')->firstOrFail();
+        $this->assertNull($audit->before['max_public_status']);
+        $this->assertSame('degraded_performance', $audit->after['max_public_status']);
+        $this->assertArrayNotHasKey('config', $audit->after);
+
+        $this->patchJson($url, ['config' => [
+            'degraded_after_seconds' => 150,
+            'down_after_seconds' => 210,
+        ]])->assertOk();
+        $this->assertSame('major_outage', $component->fresh()->status);
+        $this->assertSame('major_outage', $incident->fresh()->impact);
     }
 
     public function test_overview_recent_events_include_names_and_explanatory_fields(): void
